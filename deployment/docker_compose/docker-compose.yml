@@ -390,3 +390,10 @@ volumes:
   background_logs:
   inference_model_server_logs:
   indexing_model_server_logs:
+
+networks:
+  default:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.88.0.0/16

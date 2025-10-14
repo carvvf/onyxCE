@@ -1,2 +1,3 @@
 .env*
+!docker_compose/.env
 secrets.yaml
