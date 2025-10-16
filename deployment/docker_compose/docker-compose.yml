@@ -391,6 +391,7 @@ volumes:
   inference_model_server_logs:
   indexing_model_server_logs:
 
+### Enable this section if your LAN is like 172.18.x.x to avoid conflicts with the internal docker network
 networks:
   default:
     driver: bridge
