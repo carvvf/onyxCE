@@ -28,6 +28,7 @@ from onyx.configs.llm_configs import get_image_extraction_and_analysis_enabled
 from onyx.file_processing.file_validation import TEXT_MIME_TYPE
 from onyx.file_processing.html_utils import parse_html_page_basic
 from onyx.file_processing.unstructured import get_unstructured_api_key
+from onyx.file_processing.unstructured import get_unstructured_server_url
 from onyx.file_processing.unstructured import unstructured_to_text
 from onyx.utils.file_types import PRESENTATION_MIME_TYPE
 from onyx.utils.file_types import WORD_PROCESSING_MIME_TYPE
@@ -563,7 +564,7 @@ def extract_file_text(
     }
 
     try:
-        if get_unstructured_api_key():
+        if get_unstructured_api_key() or get_unstructured_server_url():
             try:
                 return unstructured_to_text(file, file_name)
             except Exception as unstructured_error:
@@ -646,7 +647,7 @@ def _extract_text_and_images(
 ) -> ExtractionResult:
     file.seek(0)
 
-    if get_unstructured_api_key():
+    if get_unstructured_api_key() or get_unstructured_server_url():
         try:
             text_content = unstructured_to_text(file, file_name)
             return ExtractionResult(

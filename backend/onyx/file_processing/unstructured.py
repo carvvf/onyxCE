@@ -1,3 +1,4 @@
+import os
 from typing import Any
 from typing import cast
 from typing import IO
@@ -13,6 +14,8 @@ if TYPE_CHECKING:
 
 
 logger = setup_logger()
+
+UNSTRUCTURED_SERVER_URL_ENV = "UNSTRUCTURED_API_URL"
 
 
 def get_unstructured_api_key() -> str | None:
@@ -31,6 +34,14 @@ def update_unstructured_api_key(api_key: str) -> None:
 def delete_unstructured_api_key() -> None:
     kv_store = get_kv_store()
     kv_store.delete(KV_UNSTRUCTURED_API_KEY)
+
+
+def get_unstructured_server_url() -> str | None:
+    """
+    Returns a custom Unstructured API base URL when provided via environment variable.
+    """
+    server_url = os.environ.get(UNSTRUCTURED_SERVER_URL_ENV, "").strip()
+    return server_url or None
 
 
 def _sdk_partition_request(
@@ -60,7 +71,17 @@ def unstructured_to_text(file: IO[Any], file_name: str) -> str:
     logger.debug(f"Starting to read file: {file_name}")
     req = _sdk_partition_request(file, file_name, strategy="fast")
 
-    unstructured_client = UnstructuredClient(api_key_auth=get_unstructured_api_key())
+    client_kwargs: dict[str, Any] = {}
+    api_key = get_unstructured_api_key()
+    if api_key:
+        client_kwargs["api_key_auth"] = api_key
+
+    server_url = get_unstructured_server_url()
+    if server_url:
+        client_kwargs["server_url"] = server_url
+        logger.debug(f"Using custom Unstructured server URL: {server_url}")
+
+    unstructured_client = UnstructuredClient(**client_kwargs)  # type: ignore[arg-type]
 
     response = unstructured_client.general.partition(req)  # type: ignore
     elements = dict_to_elements(response.elements)
