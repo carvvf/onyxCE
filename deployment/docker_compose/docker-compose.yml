@@ -81,6 +81,7 @@ services:
       - AGENT_TIMEOUT_CONNECT_LLM_INITIAL_ANSWER_GENERATION=${CUSTOM_TOUT_LONG:-120}
       - AGENT_TIMEOUT_LLM_REFINED_ANSWER_GENERATION=${CUSTOM_TOUT_LONG:-120}
       - AGENT_TIMEOUT_CONNECT_LLM_REFINED_ANSWER_GENERATION=${CUSTOM_TOUT_LONG:-120}
+      - REQUEST_TIMEOUT_SECONDS=${REQUEST_TIMEOUT_SECONDS:-60}
     # PRODUCTION: Uncomment the line below to use if IAM_AUTH is true and you are using iam auth for postgres
     # volumes:
     #   - ./bundle.pem:/app/bundle.pem:ro
@@ -135,6 +136,7 @@ services:
       - AGENT_TIMEOUT_CONNECT_LLM_INITIAL_ANSWER_GENERATION=${CUSTOM_TOUT_LONG:-120}
       - AGENT_TIMEOUT_LLM_REFINED_ANSWER_GENERATION=${CUSTOM_TOUT_LONG:-120}
       - AGENT_TIMEOUT_CONNECT_LLM_REFINED_ANSWER_GENERATION=${CUSTOM_TOUT_LONG:-120}
+      - REQUEST_TIMEOUT_SECONDS=${REQUEST_TIMEOUT_SECONDS:-60}
     # PRODUCTION: Uncomment the line below to use if IAM_AUTH is true and you are using iam auth for postgres
     # volumes:
     #   - ./bundle.pem:/app/bundle.pem:ro
@@ -314,9 +316,9 @@ services:
     environment:
       - DOMAIN=localhost
       # Nginx proxy timeout settings (in seconds)
-      - NGINX_PROXY_CONNECT_TIMEOUT=${NGINX_PROXY_CONNECT_TIMEOUT:-300}
-      - NGINX_PROXY_SEND_TIMEOUT=${NGINX_PROXY_SEND_TIMEOUT:-300}
-      - NGINX_PROXY_READ_TIMEOUT=${NGINX_PROXY_READ_TIMEOUT:-300}
+      - NGINX_PROXY_CONNECT_TIMEOUT=${NGINX_TIMEOUT:-300}
+      - NGINX_PROXY_SEND_TIMEOUT=${NGINX_TIMEOUT:-300}
+      - NGINX_PROXY_READ_TIMEOUT=${NGINX_TIMEOUT:-300}
     ports:
       - "80:80"
       - "${HOST_PORT:-3000}:80" # allow for localhost:3000 usage, since that is the norm
