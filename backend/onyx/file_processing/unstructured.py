@@ -16,6 +16,22 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 UNSTRUCTURED_SERVER_URL_ENV = "UNSTRUCTURED_API_URL"
+UNSTRUCTURED_STRATEGY_ENV = "UNSTRUCTURED_STRATEGY"
+UNSTRUCTURED_HI_RES_MODEL_ENV = "UNSTRUCTURED_HI_RES_MODEL_NAME"
+VALID_UNSTRUCTURED_STRATEGIES = {"fast", "hi_res", "auto", "ocr_only"}
+
+def _get_bool_env(var_name: str, default: bool) -> bool:
+    value = os.environ.get(var_name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes"}
+
+
+def _get_list_env(var_name: str) -> list[str] | None:
+    raw_value = os.environ.get(var_name)
+    if not raw_value:
+        return None
+    return [item.strip() for item in raw_value.split(",") if item.strip()]
 
 
 def get_unstructured_api_key() -> str | None:
@@ -44,6 +60,69 @@ def get_unstructured_server_url() -> str | None:
     return server_url or None
 
 
+def _get_partition_params() -> dict[str, Any]:
+    strategy = os.environ.get(UNSTRUCTURED_STRATEGY_ENV, "").strip().lower()
+    if not strategy:
+        strategy = "fast"
+    elif strategy not in VALID_UNSTRUCTURED_STRATEGIES:
+        logger.warning(
+            "Invalid UNSTRUCTURED_STRATEGY '%s'. Falling back to 'fast'.", strategy
+        )
+        strategy = "fast"
+
+    params: dict[str, Any] = {"strategy": strategy}
+
+    # Request metadata-rich output for downstream processing by default.
+    if _get_bool_env("UNSTRUCTURED_COORDINATES", True):
+        params["coordinates"] = True
+
+    params["include_page_breaks"] = _get_bool_env("UNSTRUCTURED_INCLUDE_PAGE_BREAKS", False)
+    params["unique_element_ids"] = _get_bool_env("UNSTRUCTURED_UNIQUE_ELEMENT_IDS", True)
+
+    if languages := os.environ.get("UNSTRUCTURED_LANGUAGES"):
+        params["languages"] = [lang.strip() for lang in languages.split(",") if lang.strip()]
+
+    params["multipage_sections"] = _get_bool_env("UNSTRUCTURED_MULTIPAGE_SECTIONS", True)
+    if combine_under := os.environ.get("UNSTRUCTURED_COMBINE_UNDER_N_CHARS"):
+        params["combine_under_n_chars"] = int(combine_under)
+    if max_chars := os.environ.get("UNSTRUCTURED_MAX_CHARACTERS"):
+        params["max_characters"] = int(max_chars)
+    if new_after := os.environ.get("UNSTRUCTURED_NEW_AFTER_N_CHARS"):
+        params["new_after_n_chars"] = int(new_after)
+    if overlap := os.environ.get("UNSTRUCTURED_OVERLAP"):
+        params["overlap"] = int(overlap)
+    params["overlap_all"] = _get_bool_env("UNSTRUCTURED_OVERLAP_ALL", False)
+
+    if (include_slide_notes := os.environ.get("UNSTRUCTURED_INCLUDE_SLIDE_NOTES")) is not None:
+        params["include_slide_notes"] = include_slide_notes.strip().lower() in {"1", "true", "yes"}
+
+    params["pdf_infer_table_structure"] = _get_bool_env("UNSTRUCTURED_PDF_INFER_TABLE_STRUCTURE", True)
+    if skip_types := _get_list_env("UNSTRUCTURED_SKIP_INFER_TABLE_TYPES"):
+        params["skip_infer_table_types"] = skip_types
+
+    if extract_types := _get_list_env("UNSTRUCTURED_EXTRACT_IMAGE_BLOCK_TYPES"):
+        params["extract_image_block_types"] = extract_types
+
+    hi_res_model = os.environ.get(UNSTRUCTURED_HI_RES_MODEL_ENV, "").strip()
+    if hi_res_model:
+        if strategy == "hi_res":
+            params["hi_res_model_name"] = hi_res_model
+        else:
+            logger.warning(
+                "UNSTRUCTURED_HI_RES_MODEL_NAME is set but strategy is '%s'; ignoring hi_res model.",
+                strategy,
+            )
+
+    logger.debug(
+        "Using Unstructured partition params: strategy='%s'%s",
+        strategy,
+        f", hi_res_model_name='{params.get('hi_res_model_name')}'"
+        if "hi_res_model_name" in params
+        else "",
+    )
+    return params
+
+
 def _sdk_partition_request(
     file: IO[Any], file_name: str, **kwargs: Any
 ) -> "operations.PartitionRequest":
@@ -69,7 +148,8 @@ def unstructured_to_text(file: IO[Any], file_name: str) -> str:
     from unstructured_client import UnstructuredClient  # type: ignore
 
     logger.debug(f"Starting to read file: {file_name}")
-    req = _sdk_partition_request(file, file_name, strategy="fast")
+    partition_params = _get_partition_params()
+    req = _sdk_partition_request(file, file_name, **partition_params)
 
     client_kwargs: dict[str, Any] = {}
     api_key = get_unstructured_api_key()
