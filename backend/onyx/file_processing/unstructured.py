@@ -20,6 +20,12 @@ UNSTRUCTURED_STRATEGY_ENV = "UNSTRUCTURED_STRATEGY"
 UNSTRUCTURED_HI_RES_MODEL_ENV = "UNSTRUCTURED_HI_RES_MODEL_NAME"
 VALID_UNSTRUCTURED_STRATEGIES = {"fast", "hi_res", "auto", "ocr_only"}
 
+
+def is_unstructured_hi_res_strategy_enabled() -> bool:
+    strategy = os.environ.get(UNSTRUCTURED_STRATEGY_ENV, "").strip().lower()
+    return strategy == "hi_res"
+
+
 def _get_bool_env(var_name: str, default: bool) -> bool:
     value = os.environ.get(var_name)
     if value is None:

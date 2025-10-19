@@ -107,6 +107,7 @@ from onyx.db.models import IndexingStatus
 from onyx.db.models import User
 from onyx.db.models import UserRole
 from onyx.file_processing.extract_file_text import extract_file_text
+from onyx.file_processing.unstructured import is_unstructured_hi_res_strategy_enabled
 from onyx.file_store.file_store import get_default_file_store
 from onyx.file_store.models import ChatFileType
 from onyx.key_value_store.interface import KvKeyNotFoundError
@@ -504,7 +505,10 @@ def upload_files(
 
             # Special handling for doc files - only store the plaintext version
             file_type = mime_type_to_chat_file_type(file.content_type)
-            if file_type == ChatFileType.DOC:
+            if (
+                file_type == ChatFileType.DOC
+                and not is_unstructured_hi_res_strategy_enabled()
+            ):
                 extracted_text = extract_file_text(file.file, file.filename or "")
                 text_file_id = file_store.save_file(
                     content=io.BytesIO(extracted_text.encode()),
