@@ -51,6 +51,7 @@ from onyx.db.engine.sql_engine import get_session
 from onyx.db.engine.sql_engine import get_session_with_tenant
 from onyx.db.feedback import create_chat_message_feedback
 from onyx.db.feedback import create_doc_retrieval_feedback
+from onyx.db.feedback import remove_chat_message_feedback
 from onyx.db.models import User
 from onyx.db.persona import get_persona_by_id
 from onyx.db.projects import check_project_ownership
@@ -529,6 +530,21 @@ def create_chat_feedback(
     )
 
 
+@router.delete("/remove-chat-message-feedback")
+def remove_chat_feedback(
+    chat_message_id: int,
+    user: User | None = Depends(current_chat_accessible_user),
+    db_session: Session = Depends(get_session),
+) -> None:
+    user_id = user.id if user else None
+
+    remove_chat_message_feedback(
+        chat_message_id=chat_message_id,
+        user_id=user_id,
+        db_session=db_session,
+    )
+
+
 @router.post("/document-search-feedback")
 def create_search_feedback(
     feedback: SearchFeedbackRequest,
@@ -571,6 +587,7 @@ def get_max_document_tokens(
     return MaxSelectedDocumentTokens(
         max_tokens=compute_max_document_tokens_for_persona(
             persona=persona,
+            db_session=db_session,
         ),
     )
 
@@ -586,10 +603,11 @@ def get_available_context_tokens_for_session(
     db_session: Session = Depends(get_session),
 ) -> AvailableContextTokensResponse:
     """Return available context tokens for a chat session based on its persona."""
+
     try:
         chat_session = get_chat_session_by_id(
             chat_session_id=session_id,
-            user_id=user.id if user is not None else None,
+            user_id=user.id if user else None,
             db_session=db_session,
             is_shared=False,
             include_deleted=False,
@@ -602,6 +620,7 @@ def get_available_context_tokens_for_session(
 
     available = compute_max_document_tokens_for_persona(
         persona=chat_session.persona,
+        db_session=db_session,
     )
 
     return AvailableContextTokensResponse(available_tokens=available)
@@ -631,10 +650,14 @@ class ChatSeedResponse(BaseModel):
 @router.post("/seed-chat-session")
 def seed_chat(
     chat_seed_request: ChatSeedRequest,
-    # NOTE: realistically, this will be an API key not an actual user
-    _: User | None = Depends(current_user),
+    # NOTE: This endpoint is designed for programmatic access (API keys, external services)
+    # rather than authenticated user sessions. The user parameter is used for access control
+    # but the created chat session is "unassigned" (user_id=None) until a user visits the web UI.
+    # This allows external systems to pre-seed chat sessions that users can then access.
+    user: User | None = Depends(current_chat_accessible_user),
     db_session: Session = Depends(get_session),
 ) -> ChatSeedResponse:
+
     try:
         new_chat_session = create_chat_session(
             db_session=db_session,
@@ -652,7 +675,10 @@ def seed_chat(
         root_message = get_or_create_root_message(
             chat_session_id=new_chat_session.id, db_session=db_session
         )
-        llm, fast_llm = get_llms_for_persona(persona=new_chat_session.persona)
+        llm, _fast_llm = get_llms_for_persona(
+            persona=new_chat_session.persona,
+            user=user,
+        )
 
         tokenizer = get_tokenizer(
             model_name=llm.config.model_name,

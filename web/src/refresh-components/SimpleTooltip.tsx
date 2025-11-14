@@ -8,16 +8,21 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import Text from "@/refresh-components/texts/Text";
+import { cn } from "@/lib/utils";
 
 export interface SimpleTooltipProps
   extends React.ComponentPropsWithoutRef<typeof TooltipContent> {
+  disabled?: boolean;
   tooltip?: string;
   children?: React.ReactNode;
 }
 
 export default function SimpleTooltip({
+  disabled = false,
   tooltip,
+  className,
   children,
+  side = "right",
   ...rest
 }: SimpleTooltipProps) {
   // Determine hover content based on the logic:
@@ -33,12 +38,22 @@ export default function SimpleTooltip({
   return (
     <TooltipProvider>
       <Tooltip>
-        <TooltipTrigger asChild>
+        <TooltipTrigger
+          asChild
+          // Doesn't work for some reason.
+          // disabled={disabled}
+        >
           <div>{children}</div>
         </TooltipTrigger>
-        <TooltipContent side="right" {...rest}>
-          <Text inverted>{hoverContent}</Text>
-        </TooltipContent>
+        {!disabled && (
+          <TooltipContent
+            side={side}
+            className={cn("max-w-[30rem]", className)}
+            {...rest}
+          >
+            <Text textLight05>{hoverContent}</Text>
+          </TooltipContent>
+        )}
       </Tooltip>
     </TooltipProvider>
   );

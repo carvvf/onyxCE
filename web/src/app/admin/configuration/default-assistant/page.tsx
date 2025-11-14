@@ -16,12 +16,10 @@ import { Separator } from "@/components/ui/separator";
 import { SubLabel } from "@/components/Field";
 import Button from "@/refresh-components/buttons/Button";
 import { cn } from "@/lib/utils";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import SimpleTooltip from "@/refresh-components/SimpleTooltip";
+import { useSettingsContext } from "@/components/settings/SettingsProvider";
+import Link from "next/link";
+import { Callout } from "@/components/ui/callout";
 
 interface DefaultAssistantConfiguration {
   tool_ids: number[];
@@ -47,6 +45,7 @@ function DefaultAssistantConfig() {
   const router = useRouter();
   const { popup, setPopup } = usePopup();
   const { refreshAgents } = useAgentsContext();
+  const combinedSettings = useSettingsContext();
   const [savingTools, setSavingTools] = useState<Set<number>>(new Set());
   const [savingPrompt, setSavingPrompt] = useState(false);
   const [enabledTools, setEnabledTools] = useState<Set<number>>(new Set());
@@ -167,6 +166,28 @@ function DefaultAssistantConfig() {
     );
   }
 
+  // Show message if default assistant is disabled
+  if (combinedSettings?.settings?.disable_default_assistant) {
+    return (
+      <div>
+        {popup}
+        <Callout type="notice">
+          <p className="mb-3">
+            The default assistant is currently disabled in your workspace
+            settings.
+          </p>
+          <p>
+            To configure the default assistant, you must first enable it in{" "}
+            <Link href="/admin/settings" className="text-link font-medium">
+              Workspace Settings
+            </Link>
+            .
+          </p>
+        </Callout>
+      </div>
+    );
+  }
+
   return (
     <div>
       {popup}
@@ -282,16 +303,11 @@ function ToolToggle({
         <div className="text-sm font-medium flex items-center gap-2">
           <span>{tool.display_name}</span>
           {!tool.is_available && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="text-xs text-text-400 border border-border rounded px-1 py-0.5 cursor-help">
-                  Not enabled
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>
-                <Text inverted>{notEnabledReason}</Text>
-              </TooltipContent>
-            </Tooltip>
+            <SimpleTooltip tooltip={notEnabledReason}>
+              <span className="text-xs text-text-400 border border-border rounded px-1 py-0.5 cursor-help">
+                Not enabled
+              </span>
+            </SimpleTooltip>
           )}
         </div>
         <Text className="text-sm text-text-600 mt-1">{tool.description}</Text>

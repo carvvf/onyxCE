@@ -30,6 +30,7 @@ from sqlalchemy import Integer
 from sqlalchemy import Sequence
 from sqlalchemy import String
 from sqlalchemy import Text
+from sqlalchemy import text
 from sqlalchemy import UniqueConstraint
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.engine.interfaces import Dialect
@@ -65,6 +66,7 @@ from onyx.db.enums import (
     UserFileStatus,
     MCPAuthenticationPerformer,
     MCPTransport,
+    ThemePreference,
 )
 from onyx.configs.constants import NotificationType
 from onyx.configs.constants import SearchFeedbackType
@@ -183,6 +185,11 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
     )
     auto_scroll: Mapped[bool | None] = mapped_column(Boolean, default=None)
     shortcut_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    theme_preference: Mapped[ThemePreference | None] = mapped_column(
+        Enum(ThemePreference, native_enum=False),
+        nullable=True,
+        default=None,
+    )
     # personalization fields are exposed via the chat user settings "Personalization" tab
     personal_name: Mapped[str | None] = mapped_column(String, nullable=True)
     personal_role: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -248,6 +255,11 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
         cascade="all, delete-orphan",
         lazy="selectin",
     )
+    oauth_user_tokens: Mapped[list["OAuthUserToken"]] = relationship(
+        "OAuthUserToken",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
     @validates("email")
     def validate_email(self, key: str, value: str) -> str:
@@ -307,6 +319,45 @@ class ApiKey(Base):
 
     # Add this relationship to access the User object via user_id
     user: Mapped["User"] = relationship("User", foreign_keys=[user_id])
+
+
+class PersonalAccessToken(Base):
+    __tablename__ = "personal_access_token"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)  # User-provided label
+    hashed_token: Mapped[str] = mapped_column(
+        String(64), unique=True, nullable=False
+    )  # SHA256 = 64 hex chars
+    token_display: Mapped[str] = mapped_column(String, nullable=False)
+
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), nullable=False
+    )
+
+    expires_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )  # NULL = no expiration. Revocation sets this to NOW() for immediate expiry.
+
+    # Audit fields
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    last_used_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    is_revoked: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("false"), nullable=False
+    )  # True if user explicitly revoked (vs naturally expired)
+
+    user: Mapped["User"] = relationship("User", foreign_keys=[user_id])
+
+    # Indexes for performance
+    __table_args__ = (
+        Index(
+            "ix_pat_user_created", user_id, created_at.desc()
+        ),  # Fast user token listing
+    )
 
 
 class Notification(Base):
@@ -2355,6 +2406,12 @@ class LLMProvider(Base):
         secondary="llm_provider__user_group",
         viewonly=True,
     )
+    personas: Mapped[list["Persona"]] = relationship(
+        "Persona",
+        secondary="llm_provider__persona",
+        back_populates="allowed_by_llm_providers",
+        viewonly=True,
+    )
     model_configurations: Mapped[list["ModelConfiguration"]] = relationship(
         "ModelConfiguration",
         back_populates="llm_provider",
@@ -2509,9 +2566,16 @@ class Tool(Base):
     mcp_server_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("mcp_server.id", ondelete="CASCADE"), nullable=True
     )
+    # OAuth configuration for this tool (null for tools without OAuth)
+    oauth_config_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("oauth_config.id", ondelete="SET NULL"), nullable=True
+    )
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     user: Mapped[User | None] = relationship("User", back_populates="custom_tools")
+    oauth_config: Mapped["OAuthConfig | None"] = relationship(
+        "OAuthConfig", back_populates="tools"
+    )
     # Relationship to Persona through the association table
     personas: Mapped[list["Persona"]] = relationship(
         "Persona",
@@ -2521,6 +2585,92 @@ class Tool(Base):
     # MCP server relationship
     mcp_server: Mapped["MCPServer | None"] = relationship(
         "MCPServer", back_populates="current_actions"
+    )
+
+
+class OAuthConfig(Base):
+    """OAuth provider configuration that can be shared across multiple tools"""
+
+    __tablename__ = "oauth_config"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+
+    # OAuth provider endpoints
+    authorization_url: Mapped[str] = mapped_column(Text, nullable=False)
+    token_url: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Client credentials (encrypted)
+    client_id: Mapped[str] = mapped_column(EncryptedString(), nullable=False)
+    client_secret: Mapped[str] = mapped_column(EncryptedString(), nullable=False)
+
+    # Optional configurations
+    scopes: Mapped[list[str] | None] = mapped_column(postgresql.JSONB(), nullable=True)
+    additional_params: Mapped[dict[str, Any] | None] = mapped_column(
+        postgresql.JSONB(), nullable=True
+    )
+
+    # Metadata
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    # Relationships
+    tools: Mapped[list["Tool"]] = relationship("Tool", back_populates="oauth_config")
+    user_tokens: Mapped[list["OAuthUserToken"]] = relationship(
+        "OAuthUserToken", back_populates="oauth_config", cascade="all, delete-orphan"
+    )
+
+
+class OAuthUserToken(Base):
+    """Per-user OAuth tokens for a specific OAuth configuration"""
+
+    __tablename__ = "oauth_user_token"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    oauth_config_id: Mapped[int] = mapped_column(
+        ForeignKey("oauth_config.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), nullable=False
+    )
+
+    # Token data (encrypted)
+    # Structure: {
+    #   "access_token": "...",
+    #   "refresh_token": "...",  # Optional
+    #   "token_type": "Bearer",
+    #   "expires_at": 1234567890,  # Unix timestamp, optional
+    #   "scope": "repo user"  # Optional
+    # }
+    token_data: Mapped[dict[str, Any]] = mapped_column(EncryptedJson(), nullable=False)
+
+    # Metadata
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    # Relationships
+    oauth_config: Mapped["OAuthConfig"] = relationship(
+        "OAuthConfig", back_populates="user_tokens"
+    )
+    user: Mapped["User"] = relationship("User")
+
+    # Unique constraint: One token per user per OAuth config
+    __table_args__ = (
+        UniqueConstraint("oauth_config_id", "user_id", name="uq_oauth_user_token"),
     )
 
 
@@ -2635,6 +2785,12 @@ class Persona(Base):
     groups: Mapped[list["UserGroup"]] = relationship(
         "UserGroup",
         secondary="persona__user_group",
+        viewonly=True,
+    )
+    allowed_by_llm_providers: Mapped[list["LLMProvider"]] = relationship(
+        "LLMProvider",
+        secondary="llm_provider__persona",
+        back_populates="personas",
         viewonly=True,
     )
     # Relationship to UserFile
@@ -2954,6 +3110,22 @@ class Persona__UserGroup(Base):
     persona_id: Mapped[int] = mapped_column(ForeignKey("persona.id"), primary_key=True)
     user_group_id: Mapped[int] = mapped_column(
         ForeignKey("user_group.id"), primary_key=True
+    )
+
+
+class LLMProvider__Persona(Base):
+    """Association table restricting LLM providers to specific personas.
+
+    If no such rows exist for a given LLM provider, then it is accessible by all personas.
+    """
+
+    __tablename__ = "llm_provider__persona"
+
+    llm_provider_id: Mapped[int] = mapped_column(
+        ForeignKey("llm_provider.id", ondelete="CASCADE"), primary_key=True
+    )
+    persona_id: Mapped[int] = mapped_column(
+        ForeignKey("persona.id", ondelete="CASCADE"), primary_key=True
     )
 
 

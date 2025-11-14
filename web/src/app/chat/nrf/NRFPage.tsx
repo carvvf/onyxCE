@@ -11,7 +11,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { v4 as uuidv4 } from "uuid";
-import { Button } from "@/components/ui/button";
+import Button from "@/refresh-components/buttons/Button";
 import { SimplifiedChatInputBar } from "../components/input/SimplifiedChatInputBar";
 import { Menu } from "lucide-react";
 import { Shortcut } from "./interfaces";
@@ -25,13 +25,13 @@ import { useFilters } from "@/lib/hooks";
 import { uploadFilesForChat } from "../services/lib";
 import { ChatFileType, FileDescriptor } from "../interfaces";
 import { useChatContext } from "@/refresh-components/contexts/ChatContext";
+import { useLLMProviders } from "@/lib/hooks/useLLMProviders";
 import Dropzone from "react-dropzone";
 import { useSendMessageToParent } from "@/lib/extension/utils";
 import { useNRFPreferences } from "@/components/context/NRFPreferencesContext";
 import { SettingsPanel } from "../../components/nrf/SettingsPanel";
 import { ShortcutsDisplay } from "../../components/nrf/ShortcutsDisplay";
 import LoginPage from "../../auth/login/LoginPage";
-import { AuthType } from "@/lib/constants";
 import { sendSetDefaultNewTabMessage } from "@/lib/extension/utils";
 import { ReadonlyRequestCookies } from "next/dist/server/web/spec-extension/adapters/request-cookies";
 import { CHROME_MESSAGE } from "@/lib/extension/constants";
@@ -55,8 +55,9 @@ export default function NRFPage({
 
   const filterManager = useFilters();
   const { isNight } = useNightTime();
-  const { user } = useUser();
-  const { ccPairs, documentSets, tags, llmProviders } = useChatContext();
+  const { user, authTypeMetadata } = useUser();
+  const { ccPairs, documentSets, tags } = useChatContext();
+  const { llmProviders } = useLLMProviders();
   const settings = useContext(SettingsContext);
 
   const { popup, setPopup } = usePopup();
@@ -152,36 +153,7 @@ export default function NRFPage({
     sendSetDefaultNewTabMessage(false);
   };
 
-  // Auth related
-  const [authType, setAuthType] = useState<AuthType | null>(null);
-  const [fetchingAuth, setFetchingAuth] = useState(false);
-  useEffect(() => {
-    // If user is already logged in, no need to fetch auth data
-    if (user) return;
-
-    async function fetchAuthData() {
-      setFetchingAuth(true);
-
-      try {
-        const res = await fetch("/api/auth/type", {
-          method: "GET",
-          credentials: "include",
-        });
-        if (!res.ok) {
-          throw new Error(`Failed to fetch auth type: ${res.statusText}`);
-        }
-
-        const data = await res.json();
-        setAuthType(data.auth_type);
-      } catch (err) {
-        console.error("Error fetching auth data:", err);
-      } finally {
-        setFetchingAuth(false);
-      }
-    }
-
-    fetchAuthData();
-  }, [user]);
+  // Auth related - authTypeMetadata is provided by UserProvider
 
   const onSubmit = async ({
     messageOverride,
@@ -329,31 +301,21 @@ export default function NRFPage({
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="flex gap-2 justify-center">
-            <Button
-              variant="outline"
-              onClick={() => setShowTurnOffModal(false)}
-            >
+            <Button secondary onClick={() => setShowTurnOffModal(false)}>
               Cancel
             </Button>
-            <Button variant="destructive" onClick={confirmTurnOff}>
+            <Button danger onClick={confirmTurnOff}>
               Turn off
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      {!user && authType !== "disabled" && showLoginModal ? (
+      {!user && authTypeMetadata.authType !== "disabled" && showLoginModal ? (
         <Modal className="max-w-md mx-auto">
-          {fetchingAuth ? (
-            <p className="p-4">Loading login info…</p>
-          ) : authType == "basic" ? (
+          {authTypeMetadata.authType === "basic" ? (
             <LoginPage
               authUrl={null}
-              authTypeMetadata={{
-                authType: authType as AuthType,
-                autoRedirect: false,
-                requiresVerification: false,
-                anonymousUserEnabled: null,
-              }}
+              authTypeMetadata={authTypeMetadata}
               nextUrl="/nrf"
             />
           ) : (
@@ -377,7 +339,9 @@ export default function NRFPage({
           )}
         </Modal>
       ) : (
-        llmProviders.length == 0 && <ApiKeyModal setPopup={setPopup} />
+        (!llmProviders || llmProviders.length === 0) && (
+          <ApiKeyModal setPopup={setPopup} />
+        )
       )}
     </div>
   );

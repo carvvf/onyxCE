@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from datetime import datetime
 from typing import cast
 from typing import List
@@ -25,10 +26,10 @@ from onyx.server.query_and_chat.streaming_models import SearchToolDelta
 from onyx.server.query_and_chat.streaming_models import SearchToolStart
 from onyx.server.query_and_chat.streaming_models import SectionEnd
 from onyx.tools.tool_implementations.web_search.web_search_tool import WebSearchTool
+from onyx.tools.tool_implementations_v2.tool_result_models import LlmOpenUrlResult
+from onyx.tools.tool_implementations_v2.tool_result_models import LlmWebSearchResult
 from onyx.tools.tool_implementations_v2.web import _open_url_core
 from onyx.tools.tool_implementations_v2.web import _web_search_core
-from onyx.tools.tool_implementations_v2.web import OpenUrlResponse
-from onyx.tools.tool_implementations_v2.web import WebSearchResponse
 
 
 class MockTool:
@@ -57,7 +58,7 @@ class MockWebSearchProvider(WebSearchProvider):
             raise Exception("Test exception from search provider")
         return self.search_results
 
-    def contents(self, urls: List[str]) -> List[WebContent]:
+    def contents(self, urls: Sequence[str]) -> List[WebContent]:
         if self.should_raise_exception:
             raise Exception("Test exception from search provider")
         return self.content_results
@@ -102,10 +103,6 @@ def create_test_run_context(
 
     # Create test dependencies
     emitter = MockEmitter()
-    aggregated_context = MockAggregatedContext()
-    if global_iteration_responses:
-        aggregated_context.global_iteration_responses = global_iteration_responses
-
     run_dependencies = MockRunDependencies()
     run_dependencies.emitter = emitter
 
@@ -116,7 +113,7 @@ def create_test_run_context(
         research_type=ResearchType.THOUGHTFUL,
         current_run_step=current_run_step,
         iteration_instructions=iteration_instructions or [],
-        aggregated_context=aggregated_context,  # type: ignore[arg-type]
+        global_iteration_responses=global_iteration_responses or [],
         run_dependencies=run_dependencies,  # type: ignore[arg-type]
     )
 
@@ -156,31 +153,40 @@ def test_web_search_core_basic_functionality() -> None:
     result = _web_search_core(test_run_context, queries, test_provider)
 
     # Assert
-    assert isinstance(result, WebSearchResponse)
-    assert len(result.results) == 2
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert all(isinstance(r, LlmWebSearchResult) for r in result)
 
     # Check first result
-    assert result.results[0].tag == "1"
-    assert result.results[0].title == "Test Result 1"
-    assert result.results[0].link == "https://example.com/1"
-    assert result.results[0].author == "Test Author"
-    assert result.results[0].published_date == "2024-01-01T12:00:00"
-    assert result.results[0].snippet == "This is a test snippet 1"
+    assert result[0].title == "Test Result 1"
+    assert result[0].url == "https://example.com/1"
+    assert result[0].snippet == "This is a test snippet 1"
+    assert result[0].document_citation_number == -1
+    assert result[0].unique_identifier_to_strip_away == "https://example.com/1"
 
     # Check second result
-    assert result.results[1].tag == "2"
-    assert result.results[1].title == "Test Result 2"
-    assert result.results[1].link == "https://example.com/2"
-    assert result.results[1].author is None
-    assert result.results[1].published_date is None
-    assert result.results[1].snippet == "This is a test snippet 2"
+    assert result[1].title == "Test Result 2"
+    assert result[1].url == "https://example.com/2"
+    assert result[1].snippet == "This is a test snippet 2"
+    assert result[1].document_citation_number == -1
+    assert result[1].unique_identifier_to_strip_away == "https://example.com/2"
+
+    # Check that fetched_documents_cache was populated
+    assert len(test_run_context.context.fetched_documents_cache) == 2
+    assert "https://example.com/1" in test_run_context.context.fetched_documents_cache
+    assert "https://example.com/2" in test_run_context.context.fetched_documents_cache
+
+    # Verify cache entries have correct structure
+    cache_entry_1 = test_run_context.context.fetched_documents_cache[
+        "https://example.com/1"
+    ]
+    assert cache_entry_1.document_citation_number == -1
+    assert cache_entry_1.inference_section is not None
 
     # Verify context was updated
     assert test_run_context.context.current_run_step == 2
     assert len(test_run_context.context.iteration_instructions) == 1
-    assert (
-        len(test_run_context.context.aggregated_context.global_iteration_responses) == 1
-    )
+    assert len(test_run_context.context.global_iteration_responses) == 1
 
     # Check iteration instruction
     instruction = test_run_context.context.iteration_instructions[0]
@@ -192,37 +198,41 @@ def test_web_search_core_basic_functionality() -> None:
     )
 
     # Check iteration answer
-    answer = test_run_context.context.aggregated_context.global_iteration_responses[0]
+    answer = test_run_context.context.global_iteration_responses[0]
     assert isinstance(answer, IterationAnswer)
     assert answer.tool == WebSearchTool.__name__
     assert answer.iteration_nr == 1
     assert answer.question == queries[0]
-    assert len(answer.cited_documents) == 2
-
-    # Verify cited_documents were added to aggregated_context
-    assert len(test_run_context.context.aggregated_context.cited_documents) == 2
-    # Web documents have "INTERNET_SEARCH_DOC_" prefix added to the URL
-    assert (
-        test_run_context.context.aggregated_context.cited_documents[
-            0
-        ].center_chunk.document_id
-        == "INTERNET_SEARCH_DOC_https://example.com/1"
-    )
-    assert (
-        test_run_context.context.aggregated_context.cited_documents[
-            1
-        ].center_chunk.document_id
-        == "INTERNET_SEARCH_DOC_https://example.com/2"
-    )
 
     # Verify emitter events were captured
     emitter = cast(MockEmitter, test_run_context.context.run_dependencies.emitter)
-    assert len(emitter.packet_history) == 3
+    assert len(emitter.packet_history) == 4
 
     # Check the types of emitted events
     assert isinstance(emitter.packet_history[0].obj, SearchToolStart)
     assert isinstance(emitter.packet_history[1].obj, SearchToolDelta)
-    assert isinstance(emitter.packet_history[2].obj, SectionEnd)
+    assert isinstance(emitter.packet_history[2].obj, SearchToolDelta)
+    assert isinstance(emitter.packet_history[3].obj, SectionEnd)
+
+    # Verify first SearchToolDelta has queries but empty documents
+    first_search_delta = cast(SearchToolDelta, emitter.packet_history[1].obj)
+    assert first_search_delta.queries == queries
+    assert first_search_delta.documents == []
+
+    # Verify second SearchToolDelta contains SavedSearchDoc objects for favicon display
+    search_tool_delta = cast(SearchToolDelta, emitter.packet_history[2].obj)
+    assert len(search_tool_delta.documents) == 2
+
+    # Verify documents have correct properties for frontend favicon display
+    doc1 = search_tool_delta.documents[0]
+    assert isinstance(doc1, SavedSearchDoc)
+    assert doc1.link == "https://example.com/1"
+    assert (
+        doc1.semantic_identifier == "https://example.com/1"
+    )  # semantic_identifier is the link for web results
+    assert doc1.blurb == "Test Result 1"  # title is stored in blurb
+    assert doc1.source_type == DocumentSource.WEB
+    assert doc1.is_internet is True
 
 
 def test_web_fetch_core_basic_functionality() -> None:
@@ -253,35 +263,35 @@ def test_web_fetch_core_basic_functionality() -> None:
     result = _open_url_core(test_run_context, urls, test_provider)
 
     # Assert
-    assert isinstance(result, OpenUrlResponse)
-    assert len(result.results) == 2
+    assert len(result) == 2
+    assert all(isinstance(r, LlmOpenUrlResult) for r in result)
 
     # Check first result
-    assert result.results[0].tag == "1"
-    assert result.results[0].title == "Test Content 1"
-    assert result.results[0].link == "https://example.com/1"
-    assert (
-        result.results[0].truncated_content
-        == "This is the full content of the first page"
-    )
-    assert result.results[0].published_date == "2024-01-01T12:00:00"
+    assert result[0].content == "This is the full content of the first page"
+    assert result[0].document_citation_number == -1
+    assert result[0].unique_identifier_to_strip_away == "https://example.com/1"
 
     # Check second result
-    assert result.results[1].tag == "2"
-    assert result.results[1].title == "Test Content 2"
-    assert result.results[1].link == "https://example.com/2"
-    assert (
-        result.results[1].truncated_content
-        == "This is the full content of the second page"
-    )
-    assert result.results[1].published_date is None
+    assert result[1].content == "This is the full content of the second page"
+    assert result[1].document_citation_number == -1
+    assert result[1].unique_identifier_to_strip_away == "https://example.com/2"
+
+    # Check that fetched_documents_cache was populated
+    assert len(test_run_context.context.fetched_documents_cache) == 2
+    assert "https://example.com/1" in test_run_context.context.fetched_documents_cache
+    assert "https://example.com/2" in test_run_context.context.fetched_documents_cache
+
+    # Verify cache entries have correct structure
+    cache_entry_1 = test_run_context.context.fetched_documents_cache[
+        "https://example.com/1"
+    ]
+    assert cache_entry_1.document_citation_number == -1
+    assert cache_entry_1.inference_section is not None
 
     # Verify context was updated
     assert test_run_context.context.current_run_step == 2
     assert len(test_run_context.context.iteration_instructions) == 1
-    assert (
-        len(test_run_context.context.aggregated_context.global_iteration_responses) == 1
-    )
+    assert len(test_run_context.context.global_iteration_responses) == 1
 
     # Check iteration instruction
     instruction = test_run_context.context.iteration_instructions[0]
@@ -294,7 +304,7 @@ def test_web_fetch_core_basic_functionality() -> None:
     )
 
     # Check iteration answer
-    answer = test_run_context.context.aggregated_context.global_iteration_responses[0]
+    answer = test_run_context.context.global_iteration_responses[0]
     assert isinstance(answer, IterationAnswer)
     assert answer.tool == WebSearchTool.__name__
     assert answer.iteration_nr == 1
@@ -303,10 +313,6 @@ def test_web_fetch_core_basic_functionality() -> None:
         == "Fetch content from URLs: https://example.com/1, https://example.com/2"
     )
     assert len(answer.cited_documents) == 2
-
-    # Verify cited_documents were added to the answer but NOT to aggregated_context.cited_documents
-    # (web fetch adds documents to the answer but not to the global cited_documents list)
-    assert len(test_run_context.context.aggregated_context.cited_documents) == 0
 
     # Verify emitter events were captured
     emitter = cast(MockEmitter, test_run_context.context.run_dependencies.emitter)
@@ -339,10 +345,12 @@ def test_web_search_core_exception_handling() -> None:
 
     # Verify that even though an exception was raised, we still emitted the initial events
     # and the SectionEnd packet was emitted by the decorator
+    # Note: The first SearchToolDelta (with queries and empty documents) is emitted before the search
+    # The second SearchToolDelta (with documents) is not emitted when an exception occurs during search
     emitter = test_run_context.context.run_dependencies.emitter  # type: ignore[attr-defined]
     assert (
         len(emitter.packet_history) == 3
-    )  # SearchToolStart, SearchToolDelta, and SectionEnd
+    )  # SearchToolStart, first SearchToolDelta, and SectionEnd
 
     # Check the types of emitted events
     assert isinstance(emitter.packet_history[0].obj, SearchToolStart)
@@ -393,7 +401,7 @@ def test_web_search_core_multiple_queries() -> None:
                 ]
             return []
 
-        def contents(self, urls: List[str]) -> List[WebContent]:
+        def contents(self, urls: Sequence[str]) -> List[WebContent]:
             return []
 
     test_provider = MultiQueryMockProvider()
@@ -402,22 +410,24 @@ def test_web_search_core_multiple_queries() -> None:
     result = _web_search_core(test_run_context, queries, test_provider)
 
     # Assert
-    assert isinstance(result, WebSearchResponse)
+    assert isinstance(result, list)
     # Should have 3 total results (2 from first query + 1 from second query)
-    assert len(result.results) == 3
+    assert len(result) == 3
+    assert all(isinstance(r, LlmWebSearchResult) for r in result)
 
     # Verify all results are present (order may vary due to parallel execution)
-    titles = {r.title for r in result.results}
+    titles = {r.title for r in result}
     assert "First Result 1" in titles
     assert "First Result 2" in titles
     assert "Second Result 1" in titles
 
+    # Check that fetched_documents_cache was populated with all URLs
+    assert len(test_run_context.context.fetched_documents_cache) == 3
+
     # Verify context was updated
     assert test_run_context.context.current_run_step == 2
     assert len(test_run_context.context.iteration_instructions) == 1
-    assert (
-        len(test_run_context.context.aggregated_context.global_iteration_responses) == 1
-    )
+    assert len(test_run_context.context.global_iteration_responses) == 1
 
     # Check iteration instruction contains both queries
     instruction = test_run_context.context.iteration_instructions[0]
@@ -428,45 +438,36 @@ def test_web_search_core_multiple_queries() -> None:
     assert "second query" in instruction.reasoning
 
     # Check iteration answer
-    answer = test_run_context.context.aggregated_context.global_iteration_responses[0]
+    answer = test_run_context.context.global_iteration_responses[0]
     assert isinstance(answer, IterationAnswer)
     assert answer.tool == WebSearchTool.__name__
     assert answer.iteration_nr == 1
     assert "first query" in answer.question
     assert "second query" in answer.question
-    assert len(answer.cited_documents) == 3
-
-    # Verify cited_documents were added to aggregated_context
-    assert len(test_run_context.context.aggregated_context.cited_documents) == 3
-    # Verify at least one of the cited documents has the correct format
-    document_ids = [
-        doc.center_chunk.document_id
-        for doc in test_run_context.context.aggregated_context.cited_documents
-    ]
-    assert any(
-        "INTERNET_SEARCH_DOC_https://example.com/first" in doc_id
-        for doc_id in document_ids
-    )
-    assert any(
-        "INTERNET_SEARCH_DOC_https://example.com/second" in doc_id
-        for doc_id in document_ids
-    )
 
     # Verify emitter events were captured
     emitter = cast(MockEmitter, test_run_context.context.run_dependencies.emitter)
-    assert len(emitter.packet_history) == 3
+    assert len(emitter.packet_history) == 4
 
     # Check the types of emitted events
     assert isinstance(emitter.packet_history[0].obj, SearchToolStart)
     assert isinstance(emitter.packet_history[1].obj, SearchToolDelta)
-    assert isinstance(emitter.packet_history[2].obj, SectionEnd)
+    assert isinstance(emitter.packet_history[2].obj, SearchToolDelta)
+    assert isinstance(emitter.packet_history[3].obj, SectionEnd)
 
-    # Check that SearchToolDelta contains both queries
-    search_delta = emitter.packet_history[1].obj
-    assert search_delta.queries is not None
-    assert len(search_delta.queries) == 2
-    assert "first query" in search_delta.queries
-    assert "second query" in search_delta.queries
+    # Check that first SearchToolDelta contains both queries (with empty documents)
+    first_search_delta = cast(SearchToolDelta, emitter.packet_history[1].obj)
+    assert first_search_delta.queries is not None
+    assert len(first_search_delta.queries) == 2
+    assert "first query" in first_search_delta.queries
+    assert "second query" in first_search_delta.queries
+    assert first_search_delta.documents == []
+
+    # Check that second SearchToolDelta contains documents
+    second_search_delta = cast(SearchToolDelta, emitter.packet_history[2].obj)
+    assert (
+        len(second_search_delta.documents) == 3
+    )  # 2 from first query + 1 from second query
 
 
 def test_web_fetch_core_exception_handling() -> None:
@@ -516,3 +517,62 @@ def test_saved_search_doc_from_url() -> None:
     assert doc.boost == 1
     assert doc.hidden is False
     assert doc.score == 0.0
+
+
+def test_web_search_and_open_url_cache_deduplication() -> None:
+    """Test that web_search and open_url properly share the fetched_documents_cache for the same URL"""
+    # Arrange
+    test_run_context = create_test_run_context()
+    test_url = "https://example.com/1"
+
+    # First, do a web search that returns this URL
+    search_results = [
+        WebSearchResult(
+            title="Test Result",
+            link=test_url,
+            author="Test Author",
+            published_date=datetime(2024, 1, 1, 12, 0, 0),
+            snippet="This is a test snippet",
+        ),
+    ]
+
+    # Then, fetch the full content for the same URL
+    content_results = [
+        WebContent(
+            title="Test Content",
+            link=test_url,
+            full_content="This is the full content of the page",
+            published_date=datetime(2024, 1, 1, 12, 0, 0),
+        ),
+    ]
+
+    search_provider = MockWebSearchProvider(
+        search_results=search_results,
+        content_results=content_results,
+    )
+
+    # Act - first do web_search
+    search_result = _web_search_core(test_run_context, ["test query"], search_provider)
+
+    # Verify search result
+    assert len(search_result) == 1
+    assert search_result[0].url == test_url
+
+    # Verify cache was populated by web_search
+    assert test_url in test_run_context.context.fetched_documents_cache
+
+    # Act - then open_url on the same URL
+    open_result = _open_url_core(test_run_context, [test_url], search_provider)
+
+    # Verify open_url result
+    assert len(open_result) == 1
+    assert open_result[0].content == "This is the full content of the page"
+
+    # Verify cache still has the same entry (not duplicated)
+    assert len(test_run_context.context.fetched_documents_cache) == 1
+    assert test_url in test_run_context.context.fetched_documents_cache
+    cache_entry_after_open = test_run_context.context.fetched_documents_cache[test_url]
+
+    # Verify that the cache entry was updated with the full content
+    # (The inference section should be updated, not replaced)
+    assert cache_entry_after_open.document_citation_number == -1

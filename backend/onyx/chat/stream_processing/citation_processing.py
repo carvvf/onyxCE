@@ -50,13 +50,11 @@ class CitationProcessor:
     def __init__(
         self,
         context_docs: list[LlmDoc],
-        final_doc_id_to_rank_map: DocumentIdOrderMapping,
-        display_doc_id_to_rank_map: DocumentIdOrderMapping,
+        doc_id_to_rank_map: DocumentIdOrderMapping,
         stop_stream: str | None = STOP_STREAM_PAT,
     ):
         self.context_docs = context_docs  # list of docs in the order the LLM sees
-        self.final_order_mapping = final_doc_id_to_rank_map.order_mapping
-        self.display_order_mapping = display_doc_id_to_rank_map.order_mapping
+        self.order_mapping = doc_id_to_rank_map.order_mapping
         self.max_citation_num = len(context_docs)
         self.stop_stream = stop_stream
 
@@ -69,11 +67,14 @@ class CitationProcessor:
         self.non_citation_count = 0
 
         # '[', '[[', '[1', '[[1', '[1,', '[1, ', '[1,2', '[1, 2,', etc.
-        self.possible_citation_pattern = re.compile(r"(\[+(?:\d+,? ?)*$)")
+        # Also matches unicode bracket variants: 【, ［
+        self.possible_citation_pattern = re.compile(r"([\[【［]+(?:\d+,? ?)*$)")
 
-        # group 1: '[[1]]', [[2]], etc.
-        # group 2: '[1]', '[1, 2]', '[1,2,16]', etc.
-        self.citation_pattern = re.compile(r"(\[\[\d+\]\])|(\[\d+(?:, ?\d+)*\])")
+        # group 1: '[[1]]', [[2]], etc. (also matches 【【1】】, ［［1］］, 【1】, ［1］)
+        # group 2: '[1]', '[1, 2]', '[1,2,16]', etc. (also matches unicode variants)
+        self.citation_pattern = re.compile(
+            r"([\[【［]{2}\d+[\]】］]{2})|([\[【［]\d+(?:, ?\d+)*[\]】］])"
+        )
 
     def process_token(
         self, token: str | None
@@ -149,15 +150,20 @@ class CitationProcessor:
     def process_citation(self, match: re.Match) -> tuple[str, list[CitationInfo]]:
         """
         Process a single citation match and return the citation string and the
-        citation info. The match string can look like '[1]', '[1, 13, 6], '[[4]]', etc.
+        citation info. The match string can look like '[1]', '[1, 13, 6], '[[4]]',
+        '【1】', '【【4】】', '［1］', etc.
         """
-        citation_str: str = match.group()  # e.g., '[1]', '[1, 2, 3]', '[[1]]', etc.
-        formatted = match.lastindex == 1  # True means already in the form '[[1]]'
+        citation_str: str = (
+            match.group()
+        )  # e.g., '[1]', '[1, 2, 3]', '[[1]]', '【1】', etc.
+        formatted = (
+            match.lastindex == 1
+        )  # True means already in the form '[[1]]' or '【【1】】'
 
         final_processed_str = ""
         final_citation_info: list[CitationInfo] = []
 
-        # process the citation_str
+        # process the citation_str - regex ensures matched brackets, so we can simply slice
         citation_content = citation_str[2:-2] if formatted else citation_str[1:-1]
         for num in (int(num) for num in citation_content.split(",")):
             # keep invalid citations as is
@@ -169,13 +175,13 @@ class CitationProcessor:
             # should always be in the display_doc_order_dict. But check anyways
             context_llm_doc = self.context_docs[num - 1]
             llm_docid = context_llm_doc.document_id
-            if llm_docid not in self.display_order_mapping:
+            if llm_docid not in self.order_mapping:
                 logger.warning(
-                    f"Doc {llm_docid} not in display_doc_order_dict. "
+                    f"Doc {llm_docid} not in doc_order_dict. "
                     "Used LLM citation number instead."
                 )
-            displayed_citation_num = self.display_order_mapping.get(
-                llm_docid, self.final_order_mapping[llm_docid]
+            displayed_citation_num = self.order_mapping.get(
+                llm_docid, self.order_mapping[llm_docid]
             )
 
             # skip citations of the same work if cited recently
@@ -223,13 +229,17 @@ class CitationProcessorGraph:
 
         # '[', '[[', '[1', '[[1', '[1,', '[1, ', '[1,2', '[1, 2,', etc.
         # Also supports '[D1', '[D1, D3' type patterns
-        self.possible_citation_pattern = re.compile(r"(\[+(?:(?:\d+|D\d+),? ?)*$)")
+        # Also supports unicode bracket variants: 【, ［
+        self.possible_citation_pattern = re.compile(
+            r"([\[【［]+(?:(?:\d+|D\d+),? ?)*$)"
+        )
 
         # group 1: '[[1]]', [[2]], etc.
         # group 2: '[1]', '[1, 2]', '[1,2,16]', etc.
         # Also supports '[D1]', '[D1, D3]', '[[D1]]' type patterns
+        # Also supports unicode bracket variants
         self.citation_pattern = re.compile(
-            r"(\[\[(?:\d+|D\d+)\]\])|(\[(?:\d+|D\d+)(?:, ?(?:\d+|D\d+))*\])"
+            r"([\[【［]{2}(?:\d+|D\d+)[\]】］]{2})|([\[【［](?:\d+|D\d+)(?:, ?(?:\d+|D\d+))*[\]】］])"
         )
 
     def process_token(
@@ -309,15 +319,20 @@ class CitationProcessorGraph:
     def process_citation(self, match: re.Match) -> tuple[str, list[CitationInfo]]:
         """
         Process a single citation match and return the citation string and the
-        citation info. The match string can look like '[1]', '[1, 13, 6], '[[4]]', etc.
+        citation info. The match string can look like '[1]', '[1, 13, 6], '[[4]]',
+        '【1】', '【【4】】', '［1］', '[D1]', etc.
         """
-        citation_str: str = match.group()  # e.g., '[1]', '[1, 2, 3]', '[[1]]', etc.
-        formatted = match.lastindex == 1  # True means already in the form '[[1]]'
+        citation_str: str = (
+            match.group()
+        )  # e.g., '[1]', '[1, 2, 3]', '[[1]]', '【1】', etc.
+        formatted = (
+            match.lastindex == 1
+        )  # True means already in the form '[[1]]' or '【【1】】'
 
         final_processed_str = ""
         final_citation_info: list[CitationInfo] = []
 
-        # process the citation_str
+        # process the citation_str - regex ensures matched brackets, so we can simply slice
         citation_content = citation_str[2:-2] if formatted else citation_str[1:-1]
         for num in (int(num) for num in citation_content.split(",")):
             # keep invalid citations as is

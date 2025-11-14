@@ -1,9 +1,13 @@
 from abc import ABC
 from abc import abstractmethod
+from collections.abc import Sequence
 from datetime import datetime
 from enum import Enum
 
 from pydantic import BaseModel
+from pydantic import field_validator
+
+from onyx.utils.url import normalize_url
 
 
 class ProviderType(Enum):
@@ -16,9 +20,14 @@ class ProviderType(Enum):
 class WebSearchResult(BaseModel):
     title: str
     link: str
+    snippet: str | None = None
     author: str | None = None
     published_date: datetime | None = None
-    snippet: str | None = None
+
+    @field_validator("link")
+    @classmethod
+    def normalize_link(cls, v: str) -> str:
+        return normalize_url(v)
 
 
 class WebContent(BaseModel):
@@ -28,12 +37,17 @@ class WebContent(BaseModel):
     published_date: datetime | None = None
     scrape_successful: bool = True
 
+    @field_validator("link")
+    @classmethod
+    def normalize_link(cls, v: str) -> str:
+        return normalize_url(v)
+
 
 class WebSearchProvider(ABC):
     @abstractmethod
-    def search(self, query: str) -> list[WebSearchResult]:
+    def search(self, query: str) -> Sequence[WebSearchResult]:
         pass
 
     @abstractmethod
-    def contents(self, urls: list[str]) -> list[WebContent]:
+    def contents(self, urls: Sequence[str]) -> list[WebContent]:
         pass

@@ -1,14 +1,26 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect } from "react";
-import { User, UserPersonalization, UserRole } from "@/lib/types";
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useRef,
+} from "react";
+import {
+  User,
+  UserPersonalization,
+  UserRole,
+  ThemePreference,
+} from "@/lib/types";
 import { getCurrentUser } from "@/lib/user";
 import { usePostHog } from "posthog-js/react";
 import { CombinedSettings } from "@/app/admin/settings/interfaces";
 import { SettingsContext } from "../settings/SettingsProvider";
 import { useTokenRefresh } from "@/hooks/useTokenRefresh";
 import { AuthTypeMetadata } from "@/lib/userSS";
-import { updateUserPersonalization as persistPersonalization } from "@/lib/users/UserSettings";
+import { updateUserPersonalization as persistPersonalization } from "@/lib/userSettings";
+import { useTheme } from "next-themes";
 
 interface UserContextType {
   user: User | null;
@@ -16,6 +28,7 @@ interface UserContextType {
   isCurator: boolean;
   refreshUser: () => Promise<void>;
   isCloudSuperuser: boolean;
+  authTypeMetadata: AuthTypeMetadata;
   updateUserAutoScroll: (autoScroll: boolean) => Promise<void>;
   updateUserShortcuts: (enabled: boolean) => Promise<void>;
   toggleAssistantPinnedStatus: (
@@ -26,6 +39,9 @@ interface UserContextType {
   updateUserTemperatureOverrideEnabled: (enabled: boolean) => Promise<void>;
   updateUserPersonalization: (
     personalization: UserPersonalization
+  ) => Promise<void>;
+  updateUserThemePreference: (
+    themePreference: ThemePreference
   ) => Promise<void>;
 }
 
@@ -104,6 +120,34 @@ export function UserProvider({
 
   // Use the custom token refresh hook
   useTokenRefresh(upToDateUser, authTypeMetadata, fetchUser);
+
+  // Sync user's theme preference from DB to next-themes on load
+  const { setTheme, theme } = useTheme();
+  const hasSyncedThemeRef = useRef(false);
+
+  useEffect(() => {
+    // Only sync once per session
+    if (hasSyncedThemeRef.current) return;
+
+    // Wait for next-themes to initialize
+    if (!theme) return;
+
+    // Wait for user data to load
+    if (!upToDateUser?.id) return;
+
+    // Only sync if user has a saved preference
+    const savedTheme = upToDateUser?.preferences?.theme_preference;
+    if (!savedTheme) return;
+
+    // Sync DB theme to localStorage
+    setTheme(savedTheme);
+    hasSyncedThemeRef.current = true;
+  }, [
+    upToDateUser?.id,
+    upToDateUser?.preferences?.theme_preference,
+    theme,
+    setTheme,
+  ]);
 
   const updateUserTemperatureOverrideEnabled = async (enabled: boolean) => {
     try {
@@ -285,6 +329,41 @@ export function UserProvider({
     }
   };
 
+  const updateUserThemePreference = async (
+    themePreference: ThemePreference
+  ) => {
+    try {
+      setUpToDateUser((prevUser) => {
+        if (prevUser) {
+          return {
+            ...prevUser,
+            preferences: {
+              ...prevUser.preferences,
+              theme_preference: themePreference,
+            },
+          };
+        }
+        return prevUser;
+      });
+
+      const response = await fetch(`/api/user/theme-preference`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ theme_preference: themePreference }),
+      });
+
+      if (!response.ok) {
+        await refreshUser();
+        throw new Error("Failed to update theme preference");
+      }
+    } catch (error) {
+      console.error("Error updating theme preference:", error);
+      throw error;
+    }
+  };
+
   const refreshUser = async () => {
     await fetchUser();
   };
@@ -294,10 +373,12 @@ export function UserProvider({
       value={{
         user: upToDateUser,
         refreshUser,
+        authTypeMetadata,
         updateUserAutoScroll,
         updateUserShortcuts,
         updateUserTemperatureOverrideEnabled,
         updateUserPersonalization,
+        updateUserThemePreference,
         toggleAssistantPinnedStatus,
         isAdmin: upToDateUser?.role === UserRole.ADMIN,
         // Curator status applies for either global or basic curator

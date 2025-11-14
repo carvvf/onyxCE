@@ -1,15 +1,12 @@
 "use client";
 
-import React, { useContext } from "react";
+import React from "react";
 import { usePathname } from "next/navigation";
-import {
-  SettingsContext,
-  useSettingsContext,
-} from "@/components/settings/SettingsProvider";
+import { useSettingsContext } from "@/components/settings/SettingsProvider";
 import { CgArrowsExpandUpLeft } from "react-icons/cg";
 import Text from "@/refresh-components/texts/Text";
-import { SidebarSection } from "@/sections/sidebar/SidebarSection";
-import Settings from "@/sections/sidebar/Settings";
+import SidebarSection from "@/sections/sidebar/SidebarSection";
+import Settings from "@/sections/sidebar/Settings/Settings";
 import SidebarWrapper from "@/sections/sidebar/SidebarWrapper";
 import { useIsKGExposed } from "@/app/admin/kg/utils";
 import { useCustomAnalyticsEnabled } from "@/lib/hooks/useCustomAnalyticsEnabled";
@@ -42,7 +39,7 @@ import OnyxLogo from "@/icons/onyx-logo";
 import { CombinedSettings } from "@/app/admin/settings/interfaces";
 import { FiActivity, FiBarChart2 } from "react-icons/fi";
 import SidebarTab from "@/refresh-components/buttons/SidebarTab";
-import { SidebarBody } from "@/sections/sidebar/utils";
+import SidebarBody from "@/sections/sidebar/SidebarBody";
 
 const connectors_items = () => [
   {
@@ -303,16 +300,11 @@ export default function AdminSidebar({
   enableCloudSS,
   enableEnterpriseSS,
 }: AdminSidebarProps) {
-  const { kgExposed, isLoading: isKgExposedLoading } = useIsKGExposed();
-  const combinedSettings = useContext(SettingsContext);
-  const pathname = usePathname() ?? "";
+  const { kgExposed } = useIsKGExposed();
+  const pathname = usePathname();
   const { customAnalyticsEnabled } = useCustomAnalyticsEnabled();
   const { user } = useUser();
   const settings = useSettingsContext();
-
-  if (!combinedSettings || isKgExposedLoading) {
-    return null;
-  }
 
   const isCurator =
     user?.role === UserRole.CURATOR || user?.role === UserRole.GLOBAL_CURATOR;
@@ -340,14 +332,10 @@ export default function AdminSidebar({
           </SidebarTab>
         }
         footer={
-          <div className="flex flex-col px-spacing-interline gap-spacing-interline">
-            {combinedSettings.webVersion && (
-              <Text
-                text02
-                secondaryBody
-                className="px-spacing-interline pt-spacing-inline"
-              >
-                {`Onyx version: ${combinedSettings.webVersion}`}
+          <div className="flex flex-col gap-2">
+            {settings.webVersion && (
+              <Text text02 secondaryBody className="px-2">
+                {`Onyx version: ${settings.webVersion}`}
               </Text>
             )}
             <Settings />

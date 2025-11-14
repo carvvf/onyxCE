@@ -126,7 +126,7 @@ OAUTH_CLIENT_SECRET = (
     os.environ.get("OAUTH_CLIENT_SECRET", os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET"))
     or ""
 )
-# OpenID Connect configuration URL for Okta Profile Tool and other OIDC integrations
+# OpenID Connect configuration URL for OIDC integrations
 OPENID_CONFIG_URL = os.environ.get("OPENID_CONFIG_URL") or ""
 
 # Applicable for OIDC Auth, allows you to override the scopes that
@@ -687,11 +687,6 @@ MAX_TOKENS_FOR_FULL_INCLUSION = 4096
 #####
 # Tool Configs
 #####
-OKTA_PROFILE_TOOL_ENABLED = (
-    os.environ.get("OKTA_PROFILE_TOOL_ENABLED", "").lower() == "true"
-)
-# API token for SSWS auth to Okta Admin API. If set, Users API will be used to enrich profile.
-OKTA_API_TOKEN = os.environ.get("OKTA_API_TOKEN") or ""
 
 
 #####
@@ -799,11 +794,19 @@ ENTERPRISE_EDITION_ENABLED = (
     os.environ.get("ENABLE_PAID_ENTERPRISE_EDITION_FEATURES", "").lower() == "true"
 )
 
-# Azure DALL-E Configurations
-AZURE_DALLE_API_VERSION = os.environ.get("AZURE_DALLE_API_VERSION")
-AZURE_DALLE_API_KEY = os.environ.get("AZURE_DALLE_API_KEY")
-AZURE_DALLE_API_BASE = os.environ.get("AZURE_DALLE_API_BASE")
-AZURE_DALLE_DEPLOYMENT_NAME = os.environ.get("AZURE_DALLE_DEPLOYMENT_NAME")
+# Azure Image Configurations
+AZURE_IMAGE_API_VERSION = os.environ.get("AZURE_IMAGE_API_VERSION") or os.environ.get(
+    "AZURE_DALLE_API_VERSION"
+)
+AZURE_IMAGE_API_KEY = os.environ.get("AZURE_IMAGE_API_KEY") or os.environ.get(
+    "AZURE_DALLE_API_KEY"
+)
+AZURE_IMAGE_API_BASE = os.environ.get("AZURE_IMAGE_API_BASE") or os.environ.get(
+    "AZURE_DALLE_API_BASE"
+)
+AZURE_IMAGE_DEPLOYMENT_NAME = os.environ.get(
+    "AZURE_IMAGE_DEPLOYMENT_NAME"
+) or os.environ.get("AZURE_DALLE_DEPLOYMENT_NAME")
 
 # configurable image model
 IMAGE_MODEL_NAME = os.environ.get("IMAGE_MODEL_NAME", "gpt-image-1")

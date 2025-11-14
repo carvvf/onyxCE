@@ -10,10 +10,9 @@ import MessageSwitcher from "@/app/chat/message/MessageSwitcher";
 import Text from "@/refresh-components/texts/Text";
 import { cn } from "@/lib/utils";
 import IconButton from "@/refresh-components/buttons/IconButton";
+import CopyIconButton from "@/refresh-components/buttons/CopyIconButton";
 import SvgEdit from "@/icons/edit";
 import Button from "@/refresh-components/buttons/Button";
-import SvgCopy from "@/icons/copy";
-import { copyAll } from "@/app/chat/message/copyingUtils";
 import ExpandableContentWrapper from "@/components/tools/ExpandableContentWrapper";
 
 interface FileDisplayProps {
@@ -124,7 +123,7 @@ function MessageEditing({
     <div className="w-full">
       <div
         className={cn(
-          "w-full h-full border rounded-16 overflow-hidden p-padding-button flex flex-col gap-spacing-interline"
+          "w-full h-full border rounded-16 overflow-hidden p-3 flex flex-col gap-2"
         )}
       >
         <textarea
@@ -150,7 +149,7 @@ function MessageEditing({
             if (e.key === "Enter" && e.metaKey) handleSubmit();
           }}
         />
-        <div className="flex justify-end gap-spacing-interline">
+        <div className="flex justify-end gap-2">
           <Button onClick={handleSubmit}>Submit</Button>
           <Button secondary onClick={handleCancel}>
             Cancel
@@ -262,12 +261,10 @@ export default function HumanMessage({
                       isHovered &&
                       !isEditing &&
                       (!files || files.length === 0) ? (
-                        <div className="flex flex-row items-center justify-center gap-spacing-inline">
-                          <IconButton
-                            icon={SvgCopy}
+                        <div className="flex flex-row items-center justify-center gap-1">
+                          <CopyIconButton
+                            getCopyText={() => content}
                             tertiary
-                            tooltip="Copy"
-                            onClick={() => copyAll(content)}
                             data-testid="HumanMessage/copy-button"
                           />
                           <IconButton
@@ -288,7 +285,7 @@ export default function HumanMessage({
 
                     <div
                       className={cn(
-                        "max-w-[25rem] whitespace-break-spaces rounded-t-16 rounded-bl-16 bg-background-tint-02 py-spacing-interline px-padding-button",
+                        "max-w-[25rem] whitespace-break-spaces rounded-t-16 rounded-bl-16 bg-background-tint-02 py-2 px-3",
                         !(
                           onEdit &&
                           isHovered &&

@@ -42,12 +42,12 @@ interface UseChatSessionControllerProps {
   ) => void;
 
   // Refs
-  chatSessionIdRef: React.MutableRefObject<string | null>;
-  loadedIdSessionRef: React.MutableRefObject<string | null>;
-  textAreaRef: React.RefObject<HTMLTextAreaElement>;
-  scrollInitialized: React.MutableRefObject<boolean>;
-  isInitialLoad: React.MutableRefObject<boolean>;
-  submitOnLoadPerformed: React.MutableRefObject<boolean>;
+  chatSessionIdRef: React.RefObject<string | null>;
+  loadedIdSessionRef: React.RefObject<string | null>;
+  textAreaRef: React.RefObject<HTMLTextAreaElement | null>;
+  scrollInitialized: React.RefObject<boolean>;
+  isInitialLoad: React.RefObject<boolean>;
+  submitOnLoadPerformed: React.RefObject<boolean>;
 
   // State
   hasPerformedInitialScroll: boolean;
@@ -97,6 +97,9 @@ export function useChatSessionController({
   );
   const setCurrentSession = useChatSessionStore(
     (state) => state.setCurrentSession
+  );
+  const initializeSession = useChatSessionStore(
+    (state) => state.initializeSession
   );
   const updateHasPerformedInitialScroll = useChatSessionStore(
     (state) => state.updateHasPerformedInitialScroll
@@ -187,6 +190,9 @@ export function useChatSessionController({
 
       // Ensure the current session is set to the actual session ID from the response
       setCurrentSession(chatSession.chat_session_id);
+
+      // Initialize session data including personaId
+      initializeSession(chatSession.chat_session_id, chatSession);
 
       const newMessageMap = processRawChatHistory(
         chatSession.messages,

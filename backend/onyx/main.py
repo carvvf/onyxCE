@@ -76,12 +76,17 @@ from onyx.server.features.input_prompt.api import (
 from onyx.server.features.mcp.api import admin_router as mcp_admin_router
 from onyx.server.features.mcp.api import router as mcp_router
 from onyx.server.features.notifications.api import router as notification_router
+from onyx.server.features.oauth_config.api import (
+    admin_router as admin_oauth_config_router,
+)
+from onyx.server.features.oauth_config.api import router as oauth_config_router
 from onyx.server.features.password.api import router as password_router
 from onyx.server.features.persona.api import admin_router as admin_persona_router
 from onyx.server.features.persona.api import basic_router as persona_router
 from onyx.server.features.projects.api import router as projects_router
 from onyx.server.features.tool.api import admin_router as admin_tool_router
 from onyx.server.features.tool.api import router as tool_router
+from onyx.server.features.user_oauth_token.api import router as user_oauth_token_router
 from onyx.server.federated.api import router as federated_router
 from onyx.server.gpts.api import router as gpts_router
 from onyx.server.kg.api import admin_router as kg_admin_router
@@ -105,6 +110,7 @@ from onyx.server.onyx_api.ingestion import router as onyx_api_router
 from onyx.server.openai_assistants_api.full_openai_assistants_api import (
     get_full_openai_assistants_api_router,
 )
+from onyx.server.pat.api import router as pat_router
 from onyx.server.query_and_chat.chat_backend import router as chat_router
 from onyx.server.query_and_chat.chat_backend_v0 import router as chat_v0_router
 from onyx.server.query_and_chat.query_backend import (
@@ -324,6 +330,10 @@ def get_application(lifespan_override: Lifespan | None = None) -> FastAPI:
     application = FastAPI(
         title="Onyx Backend",
         version=__version__,
+        description="Onyx API for AI-powered chat with search, document indexing, agents, actions, and more",
+        servers=[
+            {"url": f"{WEB_DOMAIN.rstrip('/')}/api", "description": "Onyx API Server"}
+        ],
         lifespan=lifespan_override or lifespan,
     )
     if SENTRY_DSN:
@@ -369,6 +379,9 @@ def get_application(lifespan_override: Lifespan | None = None) -> FastAPI:
     include_router_with_global_prefix_prepended(application, notification_router)
     include_router_with_global_prefix_prepended(application, tool_router)
     include_router_with_global_prefix_prepended(application, admin_tool_router)
+    include_router_with_global_prefix_prepended(application, oauth_config_router)
+    include_router_with_global_prefix_prepended(application, admin_oauth_config_router)
+    include_router_with_global_prefix_prepended(application, user_oauth_token_router)
     include_router_with_global_prefix_prepended(application, state_router)
     include_router_with_global_prefix_prepended(application, onyx_api_router)
     include_router_with_global_prefix_prepended(application, gpts_router)
@@ -392,9 +405,8 @@ def get_application(lifespan_override: Lifespan | None = None) -> FastAPI:
     include_router_with_global_prefix_prepended(application, mcp_router)
     include_router_with_global_prefix_prepended(application, mcp_admin_router)
 
-    if AUTH_TYPE == AuthType.DISABLED:
-        # Server logs this during auth setup verification step
-        pass
+    if AUTH_TYPE != AuthType.DISABLED:
+        include_router_with_global_prefix_prepended(application, pat_router)
 
     if AUTH_TYPE == AuthType.BASIC or AUTH_TYPE == AuthType.CLOUD:
         include_auth_router_with_prefix(
