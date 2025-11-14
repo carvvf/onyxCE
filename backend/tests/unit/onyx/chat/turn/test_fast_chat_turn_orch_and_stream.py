@@ -11,208 +11,49 @@ injection with simple fake versions of all dependencies except for the emitter
 from collections.abc import AsyncIterator
 from typing import Any
 from typing import List
-from unittest.mock import Mock
 from uuid import UUID
 from uuid import uuid4
 
 import pytest
 from agents import AgentOutputSchemaBase
-from agents import FunctionTool
 from agents import Handoff
 from agents import Model
 from agents import ModelResponse
 from agents import ModelSettings
 from agents import ModelTracing
 from agents import Tool
-from agents import Usage
 from agents.items import ResponseOutputMessage
-from agents.items import ResponseOutputText
-from openai.types.responses import Response
 from openai.types.responses import ResponseCustomToolCallInputDeltaEvent
 from openai.types.responses.response_stream_event import ResponseCompletedEvent
 from openai.types.responses.response_stream_event import ResponseCreatedEvent
 from openai.types.responses.response_stream_event import ResponseTextDeltaEvent
-from openai.types.responses.response_usage import InputTokensDetails
-from openai.types.responses.response_usage import OutputTokensDetails
-from openai.types.responses.response_usage import ResponseUsage
 
+from onyx.agents.agent_sdk.message_types import AgentSDKMessage
+from onyx.agents.agent_sdk.message_types import AssistantMessageWithContent
+from onyx.agents.agent_sdk.message_types import InputTextContent
+from onyx.agents.agent_sdk.message_types import SystemMessage
+from onyx.agents.agent_sdk.message_types import UserMessage
 from onyx.agents.agent_search.dr.enums import ResearchType
-from onyx.agents.agent_search.dr.models import IterationAnswer
 from onyx.chat.models import PromptConfig
-from onyx.chat.turn.infra.emitter import get_default_emitter
+from onyx.chat.turn.models import ChatTurnContext
 from onyx.chat.turn.models import ChatTurnDependencies
-from onyx.context.search.models import DocumentSource
-from onyx.context.search.models import InferenceChunk
-from onyx.context.search.models import InferenceSection
-from onyx.llm.interfaces import LLM
-from onyx.llm.interfaces import LLMConfig
 from onyx.server.query_and_chat.streaming_models import CitationDelta
 from onyx.server.query_and_chat.streaming_models import CitationStart
 from onyx.server.query_and_chat.streaming_models import OverallStop
 from onyx.server.query_and_chat.streaming_models import Packet
 from onyx.server.query_and_chat.streaming_models import SectionEnd
-from onyx.tools.tool_implementations.images.image_generation_tool import (
-    ImageGenerationTool,
-)
-from onyx.tools.tool_implementations.okta_profile.okta_profile_tool import (
-    OktaProfileTool,
-)
-from onyx.tools.tool_implementations.search.search_tool import SearchTool
+from tests.unit.onyx.chat.turn.utils import BaseFakeModel
+from tests.unit.onyx.chat.turn.utils import create_fake_message
+from tests.unit.onyx.chat.turn.utils import create_fake_response
+from tests.unit.onyx.chat.turn.utils import create_fake_usage
+from tests.unit.onyx.chat.turn.utils import FakeModel
+from tests.unit.onyx.chat.turn.utils import get_model_with_response
+from tests.unit.onyx.chat.turn.utils import StreamableFakeModel
 
 
 # =============================================================================
 # Helper Functions and Base Classes for DRY Principles
 # =============================================================================
-
-
-def create_fake_usage() -> Usage:
-    """Create a standard fake usage object."""
-    return Usage(
-        requests=1,
-        input_tokens=10,
-        output_tokens=5,
-        total_tokens=15,
-        input_tokens_details=InputTokensDetails(cached_tokens=0),
-        output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
-    )
-
-
-def create_fake_response_usage() -> ResponseUsage:
-    """Create a standard fake response usage object."""
-    return ResponseUsage(
-        input_tokens=10,
-        output_tokens=5,
-        total_tokens=15,
-        input_tokens_details=InputTokensDetails(cached_tokens=0),
-        output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
-    )
-
-
-def create_fake_message(
-    text: str = "fake response", include_tool_calls: bool = False
-) -> ResponseOutputMessage:
-    """Create a fake response message with optional tool calls."""
-    content = [ResponseOutputText(text=text, type="output_text", annotations=[])]
-    message = ResponseOutputMessage(
-        id="fake-message-id",
-        role="assistant",
-        content=content,  # type: ignore[arg-type]
-        status="completed",
-        type="message",
-    )
-    return message
-
-
-def create_fake_response(
-    response_id: str = "fake-response-id", message: ResponseOutputMessage | None = None
-) -> Response:
-    """Create a fake response object."""
-    if message is None:
-        message = create_fake_message()
-
-    return Response(
-        id=response_id,
-        created_at=1234567890,
-        object="response",
-        output=[message],
-        usage=create_fake_response_usage(),
-        status="completed",
-        model="fake-model",
-        parallel_tool_calls=False,
-        tool_choice="none",
-        tools=[],
-    )
-
-
-class BaseFakeModel(Model):
-    """Base class for fake models with common functionality."""
-
-    def __init__(
-        self, name: str = "fake-model", provider: str = "fake-provider", **kwargs: Any
-    ) -> None:
-        self.name = name
-        self.provider = provider
-        # Store any additional kwargs for subclasses
-        self._kwargs = kwargs
-
-    async def get_response(
-        self,
-        system_instructions: str | None,
-        input: str | list,
-        model_settings: ModelSettings,
-        tools: List[Tool],
-        output_schema: AgentOutputSchemaBase | None,
-        handoffs: List[Handoff],
-        tracing: ModelTracing,
-        *,
-        previous_response_id: str | None = None,
-        conversation_id: str | None = None,
-        prompt: Any = None,
-    ) -> ModelResponse:
-        """Default get_response implementation."""
-        message = create_fake_message()
-        usage = create_fake_usage()
-        return ModelResponse(
-            output=[message], usage=usage, response_id="fake-response-id"
-        )
-
-
-class StreamableFakeModel(BaseFakeModel):
-    """Base class for fake models that support streaming."""
-
-    def stream_response(  # type: ignore[override]
-        self,
-        system_instructions: str | None,
-        input: str | list,
-        model_settings: ModelSettings,
-        tools: List[Tool],
-        output_schema: AgentOutputSchemaBase | None,
-        handoffs: List[Handoff],
-        tracing: ModelTracing,
-        *,
-        previous_response_id: str | None = None,
-        conversation_id: str | None = None,
-        prompt: Any = None,
-    ) -> AsyncIterator[object]:
-        """Default streaming implementation."""
-        return self._create_stream_events()
-
-    def _create_stream_events(
-        self,
-        message: ResponseOutputMessage | None = None,
-        response_id: str = "fake-response-id",
-    ) -> AsyncIterator[object]:
-        """Create standard stream events."""
-
-        async def _gen() -> AsyncIterator[object]:  # type: ignore[misc]
-            # Create message if not provided
-            msg = message if message is not None else create_fake_message()
-
-            final_response = create_fake_response(response_id, msg)
-
-            # 1) created
-            yield ResponseCreatedEvent(
-                response=final_response, sequence_number=1, type="response.created"
-            )
-
-            # 2) stream some text (delta)
-            for _ in range(5):
-                yield ResponseTextDeltaEvent(
-                    content_index=0,
-                    delta="fake response",
-                    item_id="fake-item-id",
-                    logprobs=[],
-                    output_index=0,
-                    sequence_number=2,
-                    type="response.output_text.delta",
-                )
-
-            # 3) completed
-            yield ResponseCompletedEvent(
-                response=final_response, sequence_number=3, type="response.completed"
-            )
-
-        return _gen()
 
 
 class CancellationMixin:
@@ -251,7 +92,7 @@ class CancellationMixin:
 
 
 def run_fast_chat_turn(
-    sample_messages: list[dict],
+    sample_messages: list[AgentSDKMessage],
     chat_turn_dependencies: ChatTurnDependencies,
     chat_session_id: UUID,
     message_id: int,
@@ -263,8 +104,9 @@ def run_fast_chat_turn(
 
     if prompt_config is None:
         prompt_config = PromptConfig(
-            system_prompt="You are a helpful assistant.",
-            task_prompt="Answer the user's question.",
+            default_behavior_system_prompt="You are a helpful assistant.",
+            custom_instructions=None,
+            reminder="Answer the user's question.",
             datetime_aware=False,
         )
 
@@ -330,116 +172,6 @@ def create_cancellation_model(
         chat_session_id=chat_session_id,
         redis_client=chat_turn_dependencies.redis_client,
     )
-
-
-class FakeLLM(LLM):
-    """Simple fake LLM implementation for testing."""
-
-    def __init__(self) -> None:
-        self._config = LLMConfig(
-            model_provider="fake",
-            model_name="fake-model",
-            temperature=0.7,
-            max_input_tokens=4096,
-        )
-
-    @property
-    def config(self) -> LLMConfig:
-        """Return the LLM configuration."""
-        return self._config
-
-    def log_model_configs(self) -> None:
-        """Fake log_model_configs method."""
-
-    def _invoke_implementation(
-        self,
-        prompt: Any,
-        tools: Any = None,
-        tool_choice: Any = None,
-        structured_response_format: Any = None,
-        timeout_override: Any = None,
-        max_tokens: Any = None,
-    ) -> Any:
-        """Fake _invoke_implementation method."""
-        from langchain_core.messages import AIMessage
-
-        return AIMessage(content="fake response")
-
-    def _stream_implementation(
-        self,
-        prompt: Any,
-        tools: Any = None,
-        tool_choice: Any = None,
-        structured_response_format: Any = None,
-        timeout_override: Any = None,
-        max_tokens: Any = None,
-    ) -> Any:
-        """Fake _stream_implementation method that yields no messages."""
-        return iter([])
-
-
-class FakeModel(StreamableFakeModel):
-    """Simple fake Model implementation for testing Agents SDK."""
-
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self._output_schema: AgentOutputSchemaBase | None = None
-
-    async def get_response(
-        self,
-        system_instructions: str | None,
-        input: str | list,
-        model_settings: ModelSettings,
-        tools: List[Tool],
-        output_schema: AgentOutputSchemaBase | None,
-        handoffs: List[Handoff],
-        tracing: ModelTracing,
-        *,
-        previous_response_id: str | None = None,
-        conversation_id: str | None = None,
-        prompt: Any = None,
-    ) -> ModelResponse:
-        """Override to handle structured output properly."""
-        # Store output_schema for streaming
-        self._output_schema = output_schema
-
-        # If there's an output schema, return JSON that matches it
-        if output_schema is not None:
-            # Return a message with JSON content that matches the schema
-            message = create_fake_message(text='{"ready_to_answer": true}')
-        else:
-            message = create_fake_message()
-
-        usage = create_fake_usage()
-        return ModelResponse(
-            output=[message], usage=usage, response_id="fake-response-id"
-        )
-
-    def stream_response(  # type: ignore[override]
-        self,
-        system_instructions: str | None,
-        input: str | list,
-        model_settings: ModelSettings,
-        tools: List[Tool],
-        output_schema: AgentOutputSchemaBase | None,
-        handoffs: List[Handoff],
-        tracing: ModelTracing,
-        *,
-        previous_response_id: str | None = None,
-        conversation_id: str | None = None,
-        prompt: Any = None,
-    ) -> AsyncIterator[object]:
-        """Override streaming to handle structured output."""
-        # Store output_schema for streaming
-        self._output_schema = output_schema
-
-        # If there's an output schema, create a message with JSON
-        if output_schema is not None:
-            message = create_fake_message(text='{"ready_to_answer": true}')
-        else:
-            message = create_fake_message()
-
-        return self._create_stream_events(message=message)
 
 
 class FakeCancellationModel(CancellationMixin, StreamableFakeModel):
@@ -600,125 +332,6 @@ class FakeFailingModel(BaseFakeModel):
         return _gen()
 
 
-class FakeSession:
-    """Simple fake SQLAlchemy Session for testing."""
-
-    def __init__(self) -> None:
-        self.committed = False
-        self.rolled_back = False
-
-    def commit(self) -> None:
-        self.committed = True
-
-    def rollback(self) -> None:
-        self.rolled_back = True
-
-    def add(self, instance: Any) -> None:
-        pass
-
-    def flush(self) -> None:
-        pass
-
-    def query(self, *args: Any, **kwargs: Any) -> "FakeQuery":
-        return FakeQuery()
-
-    def execute(self, *args: Any, **kwargs: Any) -> "FakeResult":
-        return FakeResult()
-
-
-class FakeQuery:
-    """Simple fake SQLAlchemy Query for testing."""
-
-    def filter(self, *args: Any, **kwargs: Any) -> "FakeQuery":
-        return self
-
-    def first(self) -> Any:
-        # Return a fake chat message to avoid the "Chat message with id not found" error
-        class FakeChatMessage:
-            def __init__(self) -> None:
-                self.id = 123
-                self.chat_session_id = "fake-session-id"
-                self.message = "fake message"
-                self.message_type = "user"
-                self.token_count = 0
-                self.rephrased_query = None
-                self.citations: dict[str, Any] = {}
-                self.error = None
-                self.alternate_assistant_id = None
-                self.overridden_model = None
-                self.research_type = "FAST"
-                self.research_plan: dict[str, Any] = {}
-                self.final_documents: list[Any] = []
-                self.research_answer_purpose = "ANSWER"
-                self.parent_message = None
-                self.is_agentic = False
-                self.search_docs: list[Any] = []
-
-        return FakeChatMessage()
-
-    def all(self) -> list:
-        return []
-
-
-class FakeResult:
-    """Simple fake SQLAlchemy Result for testing."""
-
-    def scalar(self) -> Any:
-        return None
-
-    def fetchall(self) -> list:
-        return []
-
-
-class FakeRedis:
-    """Simple fake Redis client for testing."""
-
-    def __init__(self) -> None:
-        self.data: dict = {}
-
-    def get(self, key: str) -> Any:
-        return self.data.get(key)
-
-    def set(self, key: str, value: Any, ex: Any = None) -> None:
-        self.data[key] = value
-
-    def delete(self, key: str) -> int:
-        return self.data.pop(key, 0)
-
-    def exists(self, key: str) -> bool:
-        return key in self.data
-
-
-@pytest.fixture
-def fake_llm() -> LLM:
-    """Fixture providing a fake LLM implementation."""
-    return FakeLLM()
-
-
-@pytest.fixture
-def fake_model() -> Model:
-    """Fixture providing a fake Model implementation."""
-    return FakeModel()
-
-
-@pytest.fixture
-def fake_db_session() -> FakeSession:
-    """Fixture providing a fake database session."""
-    return FakeSession()
-
-
-@pytest.fixture
-def fake_redis_client() -> FakeRedis:
-    """Fixture providing a fake Redis client."""
-    return FakeRedis()
-
-
-@pytest.fixture
-def fake_tools() -> list[FunctionTool]:
-    """Fixture providing a list of fake tools."""
-    return []
-
-
 @pytest.fixture
 def chat_session_id() -> UUID:
     """Fixture providing chat session ID."""
@@ -738,30 +351,6 @@ def research_type() -> ResearchType:
 
 
 @pytest.fixture
-def chat_turn_dependencies(
-    fake_llm: LLM,
-    fake_model: Model,
-    fake_db_session: FakeSession,
-    fake_tools: list[FunctionTool],
-    fake_redis_client: FakeRedis,
-) -> ChatTurnDependencies:
-    """Fixture providing a complete ChatTurnDependencies object with fake implementations."""
-    emitter = get_default_emitter()
-    return ChatTurnDependencies(
-        llm_model=fake_model,
-        model_settings=ModelSettings(temperature=0.0, include_usage=True),
-        llm=fake_llm,
-        db_session=fake_db_session,  # type: ignore[arg-type]
-        tools=fake_tools,
-        redis_client=fake_redis_client,  # type: ignore[arg-type]
-        emitter=emitter,
-        search_pipeline=Mock(SearchTool),
-        image_generation_tool=Mock(ImageGenerationTool),
-        okta_profile_tool=Mock(OktaProfileTool),
-    )
-
-
-@pytest.fixture
 def fake_failing_model() -> Model:
     return FakeFailingModel()
 
@@ -772,17 +361,32 @@ def fake_tool_call_model() -> Model:
 
 
 @pytest.fixture
-def sample_messages() -> list[dict]:
-    """Fixture providing sample messages for testing."""
+def sample_messages() -> list[AgentSDKMessage]:
     return [
-        {"role": "user", "content": "Hello, how are you?"},
-        {"role": "assistant", "content": "I'm doing well, thank you!"},
+        SystemMessage(
+            role="system",
+            content=[
+                InputTextContent(
+                    type="input_text",
+                    text="You are a highly capable assistant",
+                )
+            ],
+        ),
+        UserMessage(
+            role="user",
+            content=[
+                InputTextContent(
+                    type="input_text",
+                    text="hi",
+                )
+            ],
+        ),
     ]
 
 
 def test_fast_chat_turn_basic(
     chat_turn_dependencies: ChatTurnDependencies,
-    sample_messages: list[dict],
+    sample_messages: list[AgentSDKMessage],
     chat_session_id: UUID,
     message_id: int,
     research_type: ResearchType,
@@ -802,7 +406,7 @@ def test_fast_chat_turn_basic(
 
 def test_fast_chat_turn_catch_exception(
     chat_turn_dependencies: ChatTurnDependencies,
-    sample_messages: list[dict],
+    sample_messages: list[AgentSDKMessage],
     fake_failing_model: Model,
     chat_session_id: UUID,
     message_id: int,
@@ -817,8 +421,9 @@ def test_fast_chat_turn_catch_exception(
     chat_turn_dependencies.llm_model = fake_failing_model
 
     prompt_config = PromptConfig(
-        system_prompt="You are a helpful assistant.",
-        task_prompt="Answer the user's question.",
+        default_behavior_system_prompt="You are a helpful assistant.",
+        custom_instructions=None,
+        reminder="Answer the user's question.",
         datetime_aware=False,
     )
 
@@ -836,7 +441,7 @@ def test_fast_chat_turn_catch_exception(
 
 def test_fast_chat_turn_cancellation(
     chat_turn_dependencies: ChatTurnDependencies,
-    sample_messages: list[dict],
+    sample_messages: list[AgentSDKMessage],
     chat_session_id: UUID,
     message_id: int,
     research_type: ResearchType,
@@ -871,7 +476,7 @@ def test_fast_chat_turn_cancellation(
 
 def test_fast_chat_turn_tool_call_cancellation(
     chat_turn_dependencies: ChatTurnDependencies,
-    sample_messages: list[dict],
+    sample_messages: list[AgentSDKMessage],
     chat_session_id: UUID,
     message_id: int,
     research_type: ResearchType,
@@ -902,282 +507,351 @@ def test_fast_chat_turn_tool_call_cancellation(
     assert_cancellation_packets(packets, expect_cancelled_message=True)
 
 
-class FakeCitationModel(StreamableFakeModel):
-    """Fake model that simulates having iteration answers with cited documents."""
-
-    def __init__(
-        self, iteration_answers: list[IterationAnswer] | None = None, **kwargs: Any
-    ) -> None:
-        super().__init__(**kwargs)
-        self._iteration_answers = iteration_answers or []
-
-    async def get_response(
-        self,
-        system_instructions: str | None,
-        input: str | list,
-        model_settings: ModelSettings,
-        tools: List[Tool],
-        output_schema: AgentOutputSchemaBase | None,
-        handoffs: List[Handoff],
-        tracing: ModelTracing,
-        *,
-        previous_response_id: str | None = None,
-        conversation_id: str | None = None,
-        prompt: Any = None,
-    ) -> ModelResponse:
-        """Override to create a response that includes citations."""
-        # Create a message with citations that reference our test documents
-        message = create_fake_message(
-            text="Based on the search results, here's the answer with citations [[1]]."
-        )
-        usage = create_fake_usage()
-        return ModelResponse(
-            output=[message], usage=usage, response_id="fake-response-id"
-        )
-
-
-class FakeCitationModelWithContext(StreamableFakeModel):
-    def __init__(
-        self, iteration_answers: list[IterationAnswer] | None = None, **kwargs: Any
-    ) -> None:
-        super().__init__(**kwargs)
-        self._iteration_answers = iteration_answers or []
-
-    async def get_response(
-        self,
-        system_instructions: str | None,
-        input: str | list,
-        model_settings: ModelSettings,
-        tools: List[Tool],
-        output_schema: AgentOutputSchemaBase | None,
-        handoffs: List[Handoff],
-        tracing: ModelTracing,
-        *,
-        previous_response_id: str | None = None,
-        conversation_id: str | None = None,
-        prompt: Any = None,
-    ) -> ModelResponse:
-        """Override to create a response that includes citations."""
-        # If there's an output schema, return JSON that matches it
-        if output_schema is not None:
-            message = create_fake_message(text='{"ready_to_answer": true}')
-        else:
-            # Create a message with citations that reference our test documents
-            message = create_fake_message(
-                text="Based on the search results, here's the answer with citations [[1]]."
-            )
-        usage = create_fake_usage()
-        return ModelResponse(
-            output=[message], usage=usage, response_id="fake-response-id"
-        )
-
-    def stream_response(  # type: ignore[override]
-        self,
-        system_instructions: str | None,
-        input: str | list,
-        model_settings: ModelSettings,
-        tools: List[Tool],
-        output_schema: AgentOutputSchemaBase | None,
-        handoffs: List[Handoff],
-        tracing: ModelTracing,
-        *,
-        previous_response_id: str | None = None,
-        conversation_id: str | None = None,
-        prompt: Any = None,
-    ) -> AsyncIterator[object]:
-        """Override streaming to handle structured output."""
-        # If there's an output schema, create a message with JSON
-        if output_schema is not None:
-            message = create_fake_message(text='{"ready_to_answer": true}')
-            return self._create_stream_events(message=message)
-        else:
-            # For non-structured output, use the citation text
-            return super().stream_response(
-                system_instructions,
-                input,
-                model_settings,
-                tools,
-                output_schema,
-                handoffs,
-                tracing,
-                previous_response_id=previous_response_id,
-                conversation_id=conversation_id,
-                prompt=prompt,
-            )
-
-    def _create_stream_events(
-        self,
-        message: ResponseOutputMessage | None = None,
-        response_id: str = "fake-response-id",
-    ) -> AsyncIterator[object]:
-        """Create stream events with citation text."""
-        from openai.types.responses.response_stream_event import (
-            ResponseContentPartAddedEvent,
-        )
-        from openai.types.responses.response_stream_event import (
-            ResponseContentPartDoneEvent,
-        )
-
-        async def _gen() -> AsyncIterator[object]:  # type: ignore[misc]
-            # Use the provided message if available, otherwise use citation text
-            if message is not None:
-                msg = message
-                citation_text = "hi"
-            else:
-                # Create message with citation text
-                citation_text = "Based on the search results, here's the answer with citations [[1]](https://example.com)."
-                msg = create_fake_message(text=citation_text)
-
-            final_response = create_fake_response(response_id, msg)
-
-            # 1) created
-            yield ResponseCreatedEvent(
-                response=final_response, sequence_number=1, type="response.created"
-            )
-
-            # 2) content_part.added - this triggers MessageStart
-            yield ResponseContentPartAddedEvent(
-                content_index=0,
-                item_id="fake-item-id",
-                output_index=0,
-                part=ResponseOutputText(text="", type="output_text", annotations=[]),
-                sequence_number=2,
-                type="response.content_part.added",
-            )
-
-            # 3) stream the citation text in chunks
-            words = citation_text.split()
-            for word in words:
-                yield ResponseTextDeltaEvent(
-                    content_index=0,
-                    delta=word + " ",
-                    item_id="fake-item-id",
-                    logprobs=[],
-                    output_index=0,
-                    sequence_number=3,
-                    type="response.output_text.delta",
-                )
-
-            # 4) content_part.done - this triggers SectionEnd for the message
-            yield ResponseContentPartDoneEvent(
-                content_index=0,
-                item_id="fake-item-id",
-                output_index=0,
-                part=ResponseOutputText(
-                    text=citation_text, type="output_text", annotations=[]
-                ),
-                sequence_number=4,
-                type="response.content_part.done",
-            )
-
-            # 5) completed
-            yield ResponseCompletedEvent(
-                response=final_response, sequence_number=5, type="response.completed"
-            )
-
-        return _gen()
-
-
-def test_fast_chat_turn_citation_processing(
+def test_fast_chat_turn_second_turn_context_handlers(
     chat_turn_dependencies: ChatTurnDependencies,
-    sample_messages: list[dict],
     chat_session_id: UUID,
     message_id: int,
     research_type: ResearchType,
 ) -> None:
-    """Test that citation processing works correctly when iteration answers contain cited documents.
+    from onyx.chat.turn.fast_chat_turn import fast_chat_turn
 
-    This test verifies that when the agent has access to context documents through
-    iteration answers, citations in the final answer are properly processed and
-    citation events are emitted. It uses the _fast_chat_turn_core function with
-    dependency injection instead of mocking.
-    """
-    from datetime import datetime
-    from onyx.chat.turn.fast_chat_turn import _fast_chat_turn_core
-    from onyx.chat.turn.infra.chat_turn_event_stream import unified_event_stream
-    from onyx.server.query_and_chat.streaming_models import MessageStart
-
-    # Create a fake inference section with cited documents
-    fake_chunk = InferenceChunk(
-        chunk_id=1,
-        document_id="test-doc-1",
-        source_type=DocumentSource.WEB,
-        semantic_identifier="Test Document",
-        title="Test Document Title",
-        content="This is test content for citation processing.",
-        blurb="Test blurb",
-        source_links={0: "https://example.com/test-doc"},
-        match_highlights=[],
-        updated_at=datetime.now(),
-        metadata={},
-        boost=1,
-        recency_bias=0.0,
-        score=0.9,
-        hidden=False,
-        doc_summary="Test document summary",
-        chunk_context="Test context",
-        section_continuation=False,
-        image_file_id=None,
-    )
-
-    fake_inference_section = InferenceSection(
-        center_chunk=fake_chunk,
-        chunks=[fake_chunk],
-        combined_content="This is test content for citation processing.",
-    )
-
-    # Create a fake iteration answer with cited documents
-    fake_iteration_answer = IterationAnswer(
-        tool="internal_search",
-        tool_id=1,
-        iteration_nr=1,
-        parallelization_nr=1,
-        question="What is test content?",
-        reasoning="Need to search for test content",
-        answer="The test content is about citation processing [[1]].",
-        cited_documents={1: fake_inference_section},
-    )
-
-    # Create a custom model that simulates having iteration answers
-    citation_model = FakeCitationModelWithContext(
-        iteration_answers=[fake_iteration_answer]
-    )
-    chat_turn_dependencies.llm_model = citation_model
-
-    # Create a fake prompt config
+    """Test that context handlers work correctly in tandem for the next turn."""
     prompt_config = PromptConfig(
-        system_prompt="You are a helpful assistant.",
-        task_prompt="Answer the user's question.",
+        default_behavior_system_prompt="You are a helpful assistant.",
+        custom_instructions="Always be polite and helpful.",
+        reminder="Answer the user's question.",
         datetime_aware=False,
     )
 
-    # Create a decorated version of _fast_chat_turn_core for testing
-    @unified_event_stream
-    def test_fast_chat_turn_core(
-        messages: list[dict],
-        dependencies: ChatTurnDependencies,
-        session_id: UUID,
-        msg_id: int,
-        res_type: ResearchType,
-        p_config: PromptConfig,
-    ) -> None:
-        # Manually populate cited_documents from the iteration answer for this test
-        # In real usage, cited_documents would be populated by the tool implementations
-        context_docs = list(fake_iteration_answer.cited_documents.values())
+    starter_messages = [
+        SystemMessage(
+            role="system",
+            content=[
+                InputTextContent(
+                    type="input_text",
+                    text="You are a helpful assistant.",
+                )
+            ],
+        ),
+        UserMessage(
+            role="user",
+            content=[
+                InputTextContent(
+                    type="input_text",
+                    text="hi",
+                )
+            ],
+        ),
+        AssistantMessageWithContent(
+            role="assistant",
+            content=[
+                InputTextContent(
+                    type="input_text",
+                    text="I need to use a tool",
+                )
+            ],
+        ),
+        UserMessage(
+            role="user",
+            content=[
+                InputTextContent(
+                    type="input_text",
+                    text="hi again",
+                )
+            ],
+        ),
+    ]
+    generator = fast_chat_turn(
+        starter_messages,
+        chat_turn_dependencies,
+        chat_session_id,
+        message_id,
+        research_type,
+        prompt_config,
+    )
+    packets = list(generator)
+    assert_packets_contain_stop(packets)
+    assert isinstance(chat_turn_dependencies.llm_model, FakeModel)
+    input_history = chat_turn_dependencies.llm_model.input_history
+    first_input = input_history[0]
+    assert isinstance(first_input, list), "First input should be a list"
+    assert (
+        len(first_input) == 5
+    ), f"First input should have at least 3 messages (system, user, assistant, custom instructions, user), got {len(first_input)}"
 
-        _fast_chat_turn_core(
-            messages,
-            dependencies,
-            session_id,
-            msg_id,
-            res_type,
-            p_config,
-            starter_global_iteration_responses=[fake_iteration_answer],
-            starter_cited_documents=context_docs,
-        )
+    assert first_input[0]["role"] == "system", "First message should be system message"  # type: ignore
+    assert (
+        first_input[1]["role"] == "user"
+    ), "Second message should be user message from previous turn"
+    assert first_input[2]["role"] == "assistant", "Third message should be assistant message"  # type: ignore
+    assert first_input[3]["role"] == "user", "Fourth message should be custom instructions message"  # type: ignore
+    assert first_input[4]["role"] == "user", "Fifth message should be user message"  # type: ignore
 
-    # Run the test with the core function
-    generator = test_fast_chat_turn_core(
+
+def test_fast_chat_turn_context_handlers(
+    chat_turn_dependencies: ChatTurnDependencies,
+    sample_messages: list[AgentSDKMessage],
+    chat_session_id: UUID,
+    message_id: int,
+    research_type: ResearchType,
+    fake_dummy_tool: Any,
+) -> None:
+    """Test that context handlers work correctly in tandem.
+
+    This test verifies that messages are properly constructed with context handlers:
+    - First LLM call: [system, user message, custom instructions]
+    - Second LLM call (after tool call): [system, user message, tool call,
+      tool call response, custom instructions, user message with reminder]
+    """
+    from typing import Any
+
+    from agents import Tool as AgentSDKTool
+
+    from onyx.chat.models import PromptConfig
+    from onyx.chat.turn.fast_chat_turn import fast_chat_turn
+
+    # Create a model that tracks input history and returns tool call on first call
+    class FakeModelWithInputTracking(FakeToolCallModel):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            # input_history to track all inputs
+            self.input_history: list[str | list] = []
+            self.stream_call_count = 0
+
+        async def get_response(
+            self,
+            system_instructions: str | None,
+            input: str | list,
+            model_settings: Any,
+            tools: list[AgentSDKTool],
+            output_schema: Any,
+            handoffs: Any,
+            tracing: Any,
+            *,
+            previous_response_id: str | None = None,
+            conversation_id: str | None = None,
+            prompt: Any = None,
+        ) -> Any:
+            """Override to track input history."""
+            # Track input
+            self.input_history.append(input)
+            self.stream_call_count += 1
+
+            # On first call, return tool call
+            # On subsequent calls, return regular text response
+            if self.stream_call_count == 1:
+                # Create a proper tool call response
+                # Tool calls go directly in the output list, not inside a message
+                from agents import ModelResponse
+                from agents.items import ResponseFunctionToolCall
+
+                from tests.unit.onyx.chat.turn.utils import create_fake_usage
+
+                # Create tool call that goes directly in output
+                tool_call = ResponseFunctionToolCall(
+                    call_id="tool-call-1",
+                    name="dummy_tool",
+                    arguments="{}",
+                    type="function_call",
+                    id="tool-call-1",
+                )
+
+                usage = create_fake_usage()
+                return ModelResponse(
+                    output=[tool_call],  # type: ignore[list-item]
+                    usage=usage,
+                    response_id="fake-response-id-1",
+                )
+            else:
+                # Return regular text response
+                from agents import ModelResponse
+
+                from tests.unit.onyx.chat.turn.utils import create_fake_message
+                from tests.unit.onyx.chat.turn.utils import create_fake_usage
+
+                message = create_fake_message(text="This is the final answer")
+                usage = create_fake_usage()
+                return ModelResponse(
+                    output=[message], usage=usage, response_id="fake-response-id-2"
+                )
+
+        def stream_response(  # type: ignore[override]
+            self,
+            system_instructions: str | None,
+            input: str | list,
+            model_settings: Any,
+            tools: list[AgentSDKTool],
+            output_schema: Any,
+            handoffs: Any,
+            tracing: Any,
+            *,
+            previous_response_id: str | None = None,
+            conversation_id: str | None = None,
+            prompt: Any = None,
+        ) -> Any:
+            """Override to track input history and return tool call then text."""
+            from collections.abc import AsyncIterator
+
+            from openai.types.responses.response_stream_event import (
+                ResponseCompletedEvent,
+            )
+            from openai.types.responses.response_stream_event import (
+                ResponseCreatedEvent,
+            )
+            from openai.types.responses.response_stream_event import (
+                ResponseTextDeltaEvent,
+            )
+
+            from tests.unit.onyx.chat.turn.utils import create_fake_message
+            from tests.unit.onyx.chat.turn.utils import create_fake_response
+
+            # Track input
+            self.input_history.append(input)
+            self.stream_call_count += 1
+
+            # On first call, return tool call stream
+            # On subsequent calls, return regular text response
+            if self.stream_call_count == 1:
+                # Return tool call stream events
+                async def _gen_tool() -> AsyncIterator[object]:  # type: ignore[misc]
+                    from agents.items import ResponseFunctionToolCall
+                    from openai.types.responses import Response
+
+                    from tests.unit.onyx.chat.turn.utils import (
+                        create_fake_response_usage,
+                    )
+
+                    # Create tool call that goes directly in output
+                    tool_call = ResponseFunctionToolCall(
+                        call_id="tool-call-1",
+                        name="dummy_tool",
+                        arguments="{}",
+                        type="function_call",
+                    )
+
+                    # Create Response with tool call in output
+                    fake_response = Response(
+                        id="fake-response-id-1",
+                        created_at=1234567890,
+                        object="response",
+                        output=[tool_call],  # Tool call goes directly in output
+                        usage=create_fake_response_usage(),
+                        status="completed",
+                        model="fake-model",
+                        parallel_tool_calls=False,
+                        tool_choice="auto",
+                        tools=[],
+                    )
+
+                    # 1) created
+                    yield ResponseCreatedEvent(
+                        response=fake_response,
+                        sequence_number=1,
+                        type="response.created",
+                    )
+
+                    # 2) completed (tool calls are in the response already)
+                    yield ResponseCompletedEvent(
+                        response=fake_response,
+                        sequence_number=2,
+                        type="response.completed",
+                    )
+
+                return _gen_tool()
+            else:
+                # Return regular text response stream
+                async def _gen() -> AsyncIterator[object]:  # type: ignore[misc]
+                    from openai.types.responses.response_stream_event import (
+                        ResponseContentPartAddedEvent,
+                    )
+                    from openai.types.responses.response_stream_event import (
+                        ResponseContentPartDoneEvent,
+                    )
+
+                    from tests.unit.onyx.chat.turn.utils import ResponseOutputText
+
+                    msg = create_fake_message(text="This is the final answer")
+                    fake_response = create_fake_response(
+                        response_id="fake-response-id-2", message=msg
+                    )
+
+                    # 1) created
+                    yield ResponseCreatedEvent(
+                        response=fake_response,
+                        sequence_number=1,
+                        type="response.created",
+                    )
+
+                    # 2) content_part.added - triggers MessageStart
+                    yield ResponseContentPartAddedEvent(
+                        content_index=0,
+                        item_id="fake-item-id",
+                        output_index=0,
+                        part=ResponseOutputText(
+                            text="", type="output_text", annotations=[]
+                        ),
+                        sequence_number=2,
+                        type="response.content_part.added",
+                    )
+
+                    # 3) stream some text deltas
+                    yield ResponseTextDeltaEvent(
+                        content_index=0,
+                        delta="This is the final answer",
+                        item_id="fake-item-id",
+                        logprobs=[],
+                        output_index=0,
+                        sequence_number=3,
+                        type="response.output_text.delta",
+                    )
+
+                    # 4) content_part.done - triggers SectionEnd
+                    yield ResponseContentPartDoneEvent(
+                        content_index=0,
+                        item_id="fake-item-id",
+                        output_index=0,
+                        part=ResponseOutputText(
+                            text="This is the final answer",
+                            type="output_text",
+                            annotations=[],
+                        ),
+                        sequence_number=4,
+                        type="response.content_part.done",
+                    )
+
+                    # 5) completed
+                    yield ResponseCompletedEvent(
+                        response=fake_response,
+                        sequence_number=5,
+                        type="response.completed",
+                    )
+
+                return _gen()
+
+        @property
+        def call_count(self) -> int:
+            """Alias for stream_call_count for backward compatibility."""
+            return self.stream_call_count
+
+    # Create the fake model with tool
+    fake_model_with_tool = FakeModelWithInputTracking()
+
+    # Set up dependencies with the fake model and tool
+    chat_turn_dependencies.llm_model = fake_model_with_tool
+    chat_turn_dependencies.tools = [fake_dummy_tool]
+
+    # Create a prompt config with custom instructions
+    prompt_config = PromptConfig(
+        default_behavior_system_prompt="You are a helpful assistant.",
+        custom_instructions="Always be polite and helpful.",
+        reminder="Answer the user's question.",
+        datetime_aware=False,
+    )
+
+    # Run the fast chat turn
+    # The model will return a tool call on first response, execute the tool,
+    # then return a regular text response on second call
+    generator = fast_chat_turn(
         sample_messages,
         chat_turn_dependencies,
         chat_session_id,
@@ -1187,18 +861,161 @@ def test_fast_chat_turn_citation_processing(
     )
     packets = list(generator)
 
+    # Verify that the model was called at least twice (once for tool call, once for final response)
+    # Note: call_count might be higher due to multiple method calls
+    assert (
+        fake_model_with_tool.call_count >= 2
+    ), f"Expected model to be called at least twice, but was called {fake_model_with_tool.call_count} times"
+
+    # Verify that we have input history (at least 2 inputs, one for tool call and one for final answer)
+    assert (
+        len(fake_model_with_tool.input_history) >= 2
+    ), f"Expected at least 2 inputs in history, got {len(fake_model_with_tool.input_history)}"
+
+    # Verify first input: [system, user message, custom instructions]
+    first_input = fake_model_with_tool.input_history[0]
+    assert isinstance(first_input, list), "First input should be a list"
+    assert (
+        len(first_input) == 3
+    ), f"First input should have at least 3 messages (system, user, custom instructions), got {len(first_input)}"
+
+    assert first_input[0]["role"] == "system", "First message should be system message"  # type: ignore
+    assert (
+        first_input[1]["role"] == "user"  # type: ignore
+    ), "Second message should be custom instructions"
+    assert first_input[2]["role"] == "user", "Third message should be user message"  # type: ignore
+
+    # Verify second input: [system, user message, tool call, tool call response, custom instructions, user message with reminder]
+    second_input = fake_model_with_tool.input_history[1]
+    assert isinstance(second_input, list), "Second input should be a list of messages"
+    assert len(second_input) == 6, (
+        f"Second input should have 6 messages "
+        f"(system, user, tool call, tool response, custom instructions, reminder), "
+        f"got {len(second_input)}"
+    )
+
+    # Check that first message is still system message
+    assert (
+        second_input[0]["role"] == "system"
+    ), "First message in second input should be system message"
+    assert (
+        second_input[1]["role"] == "user"
+    ), "Second message in second input should be custom instructions"
+    assert (
+        second_input[2]["role"] == "user"
+    ), "Third message in second input should be user query"
+    assert (
+        second_input[3]["type"] == "function_call"
+    ), "Fourth message in second input should be tool call invocation"
+    assert (
+        second_input[4]["type"] == "function_call_output"
+    ), "Fifth message in second input should be tool call response"
+    assert (
+        second_input[5]["role"] == "user"
+    ), "Sixth message in second input should be reminder message"
+    # Verify that packets were generated successfully
+    assert_packets_contain_stop(packets)
+
+
+def test_fast_chat_turn_citation_processing(
+    chat_turn_context: ChatTurnContext,
+    sample_messages: list[AgentSDKMessage],
+    chat_session_id: UUID,
+    message_id: int,
+    research_type: ResearchType,
+) -> None:
+    from onyx.chat.turn.fast_chat_turn import _fast_chat_turn_core
+    from onyx.chat.turn.infra.chat_turn_event_stream import unified_event_stream
+    from onyx.chat.turn.models import ChatTurnContext as ChatTurnContextType
+    from onyx.server.query_and_chat.streaming_models import CitationInfo
+    from onyx.server.query_and_chat.streaming_models import MessageStart
+    from tests.unit.onyx.chat.turn.utils import create_test_inference_section
+    from tests.unit.onyx.chat.turn.utils import create_test_iteration_answer
+
+    # Create test data using helper functions
+    fake_inference_section = create_test_inference_section()
+    fake_iteration_answer = create_test_iteration_answer()
+
+    # Create a custom model with citation text
+    citation_text = "Based on the search results, here's the answer with citations [1]"
+    citation_model = get_model_with_response(
+        response_text=citation_text, stream_word_by_word=True
+    )
+    chat_turn_context.run_dependencies.llm_model = citation_model
+
+    # Create a fake prompt config
+    prompt_config = PromptConfig(
+        default_behavior_system_prompt="You are a helpful assistant.",
+        custom_instructions=None,
+        reminder="Answer the user's question.",
+        datetime_aware=False,
+    )
+
+    # Set up the chat turn context with citation-related data
+    chat_turn_context.global_iteration_responses = [fake_iteration_answer]
+    chat_turn_context.tool_calls_processed_by_citation_context_handler = 1
+
+    # Populate fetched_documents_cache with the document we're citing
+    from onyx.chat.turn.models import FetchedDocumentCacheEntry
+
+    chat_turn_context.fetched_documents_cache = {
+        "test-doc-1": FetchedDocumentCacheEntry(
+            inference_section=fake_inference_section,
+            document_citation_number=1,
+        )
+    }
+
+    chat_turn_context.citations = [
+        CitationInfo(
+            citation_num=1,
+            document_id="test-doc-1",
+        )
+    ]
+
+    # Create a decorated version of _fast_chat_turn_core for testing
+    @unified_event_stream
+    def test_fast_chat_turn_core(
+        messages: list[AgentSDKMessage],
+        dependencies: ChatTurnDependencies,
+        session_id: UUID,
+        msg_id: int,
+        res_type: ResearchType,
+        p_config: PromptConfig,
+        context: ChatTurnContextType,
+    ) -> None:
+        _fast_chat_turn_core(
+            messages,
+            dependencies,
+            session_id,
+            msg_id,
+            res_type,
+            p_config,
+            starter_context=context,
+        )
+
+    # Run the test with the core function
+    generator = test_fast_chat_turn_core(
+        sample_messages,
+        chat_turn_context.run_dependencies,
+        chat_session_id,
+        message_id,
+        research_type,
+        prompt_config,
+        chat_turn_context,
+    )
+    packets = list(generator)
+
     # Verify we get the expected packets including citation events
     assert_packets_contain_stop(packets)
 
-    # Look for message start and citation events in the packets
+    # Collect all packet data
     message_start_found = False
-    message_start_has_final_docs = False
     citation_start_found = False
     citation_delta_found = False
     citation_section_end_found = False
     message_start_index = None
     citation_start_index = None
-    message_delta_index = None
+    collected_text = ""
 
     for packet in packets:
         if isinstance(packet.obj, MessageStart):
@@ -1209,9 +1026,12 @@ def test_fast_chat_turn_citation_processing(
                 packet.obj.final_documents is not None
                 and len(packet.obj.final_documents) > 0
             ):
-                message_start_has_final_docs = True
                 # Verify the document ID matches our test document
                 assert packet.obj.final_documents[0].document_id == "test-doc-1"
+        elif packet.obj.type == "message_delta":
+            # Collect text from message deltas
+            if hasattr(packet.obj, "content") and packet.obj.content:
+                collected_text += packet.obj.content
         elif isinstance(packet.obj, CitationStart):
             citation_start_found = True
             citation_start_index = packet.ind
@@ -1234,15 +1054,9 @@ def test_fast_chat_turn_citation_processing(
             citation_section_end_found = True
             # Verify citation section end has the same index
             assert packet.ind == citation_start_index
-        elif packet.obj.type == "message_delta" and message_delta_index is None:
-            # Track the first message delta index
-            message_delta_index = packet.ind
 
     # Verify all expected events were emitted
     assert message_start_found, "MessageStart event should be emitted"
-    assert (
-        message_start_has_final_docs
-    ), "MessageStart should contain final_documents with cited docs"
     assert citation_start_found, "CitationStart event should be emitted"
     assert citation_delta_found, "CitationDelta event should be emitted"
     assert citation_section_end_found, "Citation section should end with SectionEnd"
@@ -1253,3 +1067,8 @@ def test_fast_chat_turn_citation_processing(
     assert (
         citation_start_index > message_start_index
     ), f"Citation packets (index {citation_start_index}) > message start (index {message_start_index})"
+
+    # Verify the collected text contains the expected citation format
+    assert (
+        "[[1]](https://example.com/test-doc)" in collected_text
+    ), f"Expected citation link not found in collected text: {collected_text}"

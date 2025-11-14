@@ -1,3 +1,4 @@
+import { JSX } from "react";
 import {
   AnthropicIcon,
   AmazonIcon,
@@ -11,6 +12,8 @@ import {
   DeepseekIcon,
   OpenAISVG,
   QwenIcon,
+  OllamaIcon,
+  ZAIIcon,
 } from "@/components/icons/icons";
 import {
   WellKnownLLMProviderDescriptor,
@@ -34,6 +37,7 @@ export const getProviderIcon = (
     mistral: MistralIcon,
     ministral: MistralIcon,
     llama: MetaIcon,
+    ollama_chat: OllamaIcon,
     gemini: GeminiIcon,
     deepseek: DeepseekIcon,
     claude: AnthropicIcon,
@@ -46,6 +50,7 @@ export const getProviderIcon = (
     google: GeminiIcon,
     qwen: QwenIcon,
     qwq: QwenIcon,
+    zai: ZAIIcon,
   };
 
   // First check if provider name directly matches an icon
@@ -105,7 +110,7 @@ export const dynamicProviderConfigs: Record<
     successMessage: (count: number) =>
       `Successfully fetched ${count} models for the selected region (including cross-region inference models).`,
   },
-  ollama: {
+  ollama_chat: {
     endpoint: "/api/admin/llm/ollama/available-models",
     isDisabled: (values) => !values.api_base,
     disabledReason: "API Base is required to fetch Ollama models",

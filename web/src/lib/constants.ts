@@ -12,6 +12,11 @@ export const SUB_HEADER = "h-12";
 
 export const INTERNAL_URL = process.env.INTERNAL_URL || "http://127.0.0.1:8080";
 
+// NOTE: this should ONLY be used on the server-side (including middleware).
+// The AUTH_TYPE environment variable is set in the backend and shared with Next.js
+export const SERVER_SIDE_ONLY__AUTH_TYPE = (process.env.AUTH_TYPE ||
+  "disabled") as AuthType;
+
 export const NEXT_PUBLIC_DO_NOT_USE_TOGGLE_OFF_DANSWER_POWERED =
   process.env.NEXT_PUBLIC_DO_NOT_USE_TOGGLE_OFF_DANSWER_POWERED?.toLowerCase() ===
   "true";
@@ -119,9 +124,13 @@ export const CREDENTIAL_JSON = "credential_json";
 export const MODAL_ROOT_ID = "modal-root";
 
 export const ANONYMOUS_USER_NAME = "Anonymous";
-export const UNNAMED_CHAT = "Unnamed Chat";
+export const UNNAMED_CHAT = "New Chat";
 
 export const DEFAULT_ASSISTANT_ID = 0;
 export const GENERAL_ASSISTANT_ID = -1;
 export const IMAGE_ASSISTANT_ID = -2;
 export const ART_ASSISTANT_ID = -3;
+
+// Used in the File Picker to show a max number of files.
+// The rest will be hidden behind an "All Recent Files" button.
+export const MAX_FILES_TO_SHOW = 3;

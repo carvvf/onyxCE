@@ -19,7 +19,6 @@ interface MessagesDisplayProps {
   deepResearchEnabled: boolean;
   currentMessageFiles: ProjectFile[];
   setPresentingDocument: (doc: MinimalOnyxDocument | null) => void;
-  setCurrentFeedback: (feedback: [FeedbackType, number] | null) => void;
   onSubmit: (args: {
     message: string;
     messageIdToResend?: number;
@@ -43,9 +42,9 @@ interface MessagesDisplayProps {
   handleResubmitLastMessage: () => void;
   autoScrollEnabled: boolean;
   getContainerHeight: () => string | undefined;
-  lastMessageRef: RefObject<HTMLDivElement>;
-  endPaddingRef: RefObject<HTMLDivElement>;
-  endDivRef: RefObject<HTMLDivElement>;
+  lastMessageRef: RefObject<HTMLDivElement | null>;
+  endPaddingRef: RefObject<HTMLDivElement | null>;
+  endDivRef: RefObject<HTMLDivElement | null>;
   hasPerformedInitialScroll: boolean;
   chatSessionId: string | null;
   enterpriseSettings?: EnterpriseSettings | null;
@@ -59,7 +58,6 @@ export const MessagesDisplay: React.FC<MessagesDisplayProps> = ({
   deepResearchEnabled,
   currentMessageFiles,
   setPresentingDocument,
-  setCurrentFeedback,
   onSubmit,
   onMessageSelection,
   stopGenerating,
@@ -97,13 +95,6 @@ export const MessagesDisplay: React.FC<MessagesDisplayProps> = ({
       };
     },
     [onSubmit, deepResearchEnabled, currentMessageFiles]
-  );
-
-  const handleFeedback = useCallback(
-    (feedback: FeedbackType, messageId: number) => {
-      setCurrentFeedback([feedback, messageId!]);
-    },
-    [setCurrentFeedback]
   );
 
   const handleEditWithMessageId = useCallback(
@@ -189,7 +180,6 @@ export const MessagesDisplay: React.FC<MessagesDisplayProps> = ({
             >
               <MemoizedAIMessage
                 rawPackets={message.packets}
-                handleFeedbackWithMessageId={handleFeedback}
                 assistant={liveAssistant}
                 docs={message.documents ?? emptyDocs}
                 citations={message.citations}
@@ -197,6 +187,7 @@ export const MessagesDisplay: React.FC<MessagesDisplayProps> = ({
                 createRegenerator={createRegenerator}
                 parentMessage={previousMessage!}
                 messageId={message.messageId}
+                currentFeedback={message.currentFeedback}
                 overriddenModel={llmManager.currentLlm?.modelName}
                 nodeId={message.nodeId}
                 llmManager={llmManager}

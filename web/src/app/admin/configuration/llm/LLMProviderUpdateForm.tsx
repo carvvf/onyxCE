@@ -14,17 +14,19 @@ import {
   FileUploadFormField,
 } from "@/components/Field";
 import { useEffect, useRef, useState } from "react";
-import { useSWRConfig } from "swr";
+import useSWR, { useSWRConfig } from "swr";
 import {
   LLMProviderView,
   ModelConfiguration,
   WellKnownLLMProviderDescriptor,
 } from "./interfaces";
+import { errorHandlingFetcher } from "@/lib/fetcher";
 import { dynamicProviderConfigs, fetchModels } from "./utils";
 import { PopupSpec } from "@/components/admin/connectors/Popup";
 import * as Yup from "yup";
 import isEqual from "lodash/isEqual";
 import { IsPublicGroupSelector } from "@/components/IsPublicGroupSelector";
+import { AgentsMultiSelect } from "@/components/AgentsMultiSelect";
 import SvgTrash from "@/icons/trash";
 
 function AutoFetchModelsOnEdit({
@@ -108,6 +110,16 @@ export function LLMProviderUpdateForm({
 }) {
   const { mutate } = useSWRConfig();
 
+  // Fetch agents for AgentsMultiSelect
+  const {
+    data: agents,
+    isLoading: agentsLoading,
+    error: agentsError,
+  } = useSWR<Array<{ id: number; name: string; description: string }>>(
+    "/api/persona",
+    errorHandlingFetcher
+  );
+
   const [isTesting, setIsTesting] = useState(false);
   const [testError, setTestError] = useState<string>("");
   const [isFetchingModels, setIsFetchingModels] = useState(false);
@@ -117,9 +129,16 @@ export function LLMProviderUpdateForm({
 
   // Helper function to get current model configurations
   const getCurrentModelConfigurations = (values: any): ModelConfiguration[] => {
-    return values.fetched_model_configurations?.length > 0
-      ? values.fetched_model_configurations
-      : llmProviderDescriptor.model_configurations;
+    // If user clicked "Fetch Available Models", use those
+    if ((values.fetched_model_configurations?.length ?? 0) > 0) {
+      return values.fetched_model_configurations;
+    }
+    // If editing an existing provider, use its models
+    if ((existingLlmProvider?.model_configurations?.length ?? 0) > 0) {
+      return existingLlmProvider?.model_configurations ?? [];
+    }
+    // Otherwise use the descriptor's default models
+    return llmProviderDescriptor.model_configurations;
   };
 
   // Define the initial values based on the provider's requirements
@@ -159,6 +178,7 @@ export function LLMProviderUpdateForm({
       ),
     is_public: existingLlmProvider?.is_public ?? true,
     groups: existingLlmProvider?.groups ?? [],
+    personas: existingLlmProvider?.personas ?? [],
     model_configurations: existingLlmProvider?.model_configurations ?? [],
     deployment_name: existingLlmProvider?.deployment_name,
 
@@ -254,6 +274,7 @@ export function LLMProviderUpdateForm({
     // EE Only
     is_public: Yup.boolean().required(),
     groups: Yup.array().of(Yup.number()),
+    personas: Yup.array().of(Yup.number()),
     selected_model_names: Yup.array().of(Yup.string()),
     fetched_model_configurations: Yup.array(),
   });
@@ -493,6 +514,13 @@ export function LLMProviderUpdateForm({
 
             {llmProviderDescriptor.custom_config_keys?.map(
               (customConfigKey) => {
+                // Hide Bedrock auth method field in this admin form
+                if (
+                  llmProviderDescriptor.name === "bedrock" &&
+                  customConfigKey.name === "BEDROCK_AUTH_METHOD"
+                ) {
+                  return null;
+                }
                 if (customConfigKey.key_type === "text_input") {
                   return (
                     <div key={customConfigKey.name}>
@@ -697,12 +725,27 @@ export function LLMProviderUpdateForm({
                           />
                         </div>
                       )}
-                      <IsPublicGroupSelector
-                        formikProps={formikProps}
-                        objectName="LLM Provider"
-                        publicToWhom="Users"
-                        enforceGroupSelection={true}
-                      />
+                      <Separator />
+                      <div className="flex flex-col gap-3">
+                        <Text headingH3>Access Controls</Text>
+                        <IsPublicGroupSelector
+                          formikProps={formikProps}
+                          objectName="LLM Provider"
+                          publicToWhom="Users"
+                          enforceGroupSelection={true}
+                          smallLabels={true}
+                        />
+                        <AgentsMultiSelect
+                          formikProps={formikProps}
+                          agents={agents}
+                          isLoading={agentsLoading}
+                          error={agentsError}
+                          label="Assistant Whitelist"
+                          subtext="Restrict this provider to specific assistants."
+                          disabled={formikProps.values.is_public}
+                          disabledMessage="This LLM Provider is public and available to all assistants."
+                        />
+                      </div>
                     </>
                   )}
                 </>
@@ -712,7 +755,7 @@ export function LLMProviderUpdateForm({
             {/* NOTE: this is above the test button to make sure it's visible */}
             {testError && <Text className="text-error mt-2">{testError}</Text>}
 
-            <div className="flex w-full mt-4 gap-spacing-interline">
+            <div className="flex w-full mt-4 gap-2">
               <Button disabled={isTesting}>
                 {isTesting ? (
                   <Text inverted>

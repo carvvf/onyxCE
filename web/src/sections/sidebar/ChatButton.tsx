@@ -4,10 +4,9 @@ import React, { useState, memo, useMemo, useEffect } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import SvgMoreHorizontal from "@/icons/more-horizontal";
 import { useChatContext } from "@/refresh-components/contexts/ChatContext";
-import SvgBubbleText from "@/icons/bubble-text";
 import { deleteChatSession, renameChatSession } from "@/app/chat/services/lib";
 import { ChatSession } from "@/app/chat/interfaces";
-import ConfirmationModal from "@/refresh-components/modals/ConfirmationModal";
+import ConfirmationModalLayout from "@/refresh-components/layouts/ConfirmationModalLayout";
 import SvgTrash from "@/icons/trash";
 import SvgShare from "@/icons/share";
 import SvgEdit from "@/icons/edit";
@@ -19,8 +18,7 @@ import {
   PopoverMenu,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { useAppParams, useAppRouter } from "@/hooks/appNavigation";
-import { SEARCH_PARAM_NAMES } from "@/app/chat/services/searchParams";
+import { useAppRouter } from "@/hooks/appNavigation";
 import {
   Project,
   removeChatSessionFromProject,
@@ -38,17 +36,14 @@ import MenuButton from "@/refresh-components/buttons/MenuButton";
 import { PopoverAnchor } from "@radix-ui/react-popover";
 import InputTypeIn from "@/refresh-components/inputs/InputTypeIn";
 import { usePopup } from "@/components/admin/connectors/Popup";
-import {
-  DRAG_TYPES,
-  DEFAULT_PERSONA_ID,
-  LOCAL_STORAGE_KEYS,
-} from "@/sections/sidebar/constants";
+import { DRAG_TYPES, LOCAL_STORAGE_KEYS } from "@/sections/sidebar/constants";
 import {
   shouldShowMoveModal,
   showErrorNotification,
   handleMoveOperation,
 } from "@/sections/sidebar/sidebarUtils";
 import ButtonRenaming from "@/sections/sidebar/ButtonRenaming";
+import { useAppFocus } from "@/lib/hooks";
 
 // (no local constants; use shared constants/imports)
 
@@ -113,9 +108,18 @@ function ChatButtonInner({
   draggable = false,
 }: ChatButtonProps) {
   const route = useAppRouter();
-  const params = useAppParams();
+  const activeSidebarTab = useAppFocus();
+  const active = useMemo(
+    () =>
+      typeof activeSidebarTab === "object" &&
+      activeSidebarTab.type === "chat" &&
+      activeSidebarTab.id === chatSession.id,
+    [activeSidebarTab, chatSession.id]
+  );
   const [mounted, setMounted] = useState(false);
-  const [name, setName] = useState(chatSession.name || UNNAMED_CHAT);
+  const [displayName, setDisplayName] = useState(
+    chatSession.name || UNNAMED_CHAT
+  );
   const [renaming, setRenaming] = useState(false);
   const [deleteConfirmationModalOpen, setDeleteConfirmationModalOpen] =
     useState(false);
@@ -137,8 +141,7 @@ function ChatButtonInner({
   >(null);
   const [showMoveCustomAgentModal, setShowMoveCustomAgentModal] =
     useState(false);
-  const isChatUsingDefaultAssistant =
-    chatSession.persona_id === DEFAULT_PERSONA_ID;
+
   // Drag and drop setup for chat sessions
   const dragId = `${DRAG_TYPES.CHAT}-${chatSession.id}`;
   const { attributes, listeners, setNodeRef, transform, isDragging } =
@@ -151,9 +154,36 @@ function ChatButtonInner({
       },
       disabled: !draggable || renaming,
     });
+
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  // Sync local name state when chatSession.name changes (e.g., after auto-naming)
+  useEffect(() => {
+    const newName = chatSession.name || UNNAMED_CHAT;
+    const oldName = displayName;
+
+    // Only animate if transitioning from UNNAMED_CHAT to a real name
+    if (oldName === UNNAMED_CHAT && newName !== UNNAMED_CHAT && mounted) {
+      // Type out the name character by character
+      let currentIndex = 0;
+      const typingInterval = setInterval(() => {
+        currentIndex++;
+        setDisplayName(newName.slice(0, currentIndex));
+
+        if (currentIndex >= newName.length) {
+          clearInterval(typingInterval);
+        }
+      }, 30); // 30ms per character
+
+      return () => clearInterval(typingInterval);
+    } else {
+      // No animation for other changes (manual rename, initial load, etc.)
+      setDisplayName(newName);
+    }
+  }, [chatSession.name, mounted]);
+
   const filteredProjects = useMemo(() => {
     if (!searchTerm) return projects;
     const term = searchTerm.toLowerCase();
@@ -161,6 +191,7 @@ function ChatButtonInner({
       project.name.toLowerCase().includes(term)
     );
   }, [projects, searchTerm]);
+
   useEffect(() => {
     if (!showMoveOptions) {
       const popoverItems = [
@@ -238,7 +269,7 @@ function ChatButtonInner({
   ]);
 
   async function handleRename(newName: string) {
-    setName(newName);
+    setDisplayName(newName);
     await renameChatSession(chatSession.id, newName);
     await refreshChatSessions();
   }
@@ -252,7 +283,7 @@ function ChatButtonInner({
         await refreshCurrentProjectDetails();
 
         // Only route if the deleted chat is the currently opened chat session
-        if (params(SEARCH_PARAM_NAMES.CHAT_ID) == chatSession.id) {
+        if (active) {
           route({ projectId: project.id });
         }
       }
@@ -320,7 +351,7 @@ function ChatButtonInner({
               !popoverOpen && "hidden",
               !renaming && "group-hover/SidebarTab:flex"
             )}
-            active={popoverOpen}
+            transient={popoverOpen}
             internal
           />
         </div>
@@ -340,9 +371,8 @@ function ChatButtonInner({
     >
       <PopoverAnchor>
         <SidebarTab
-          leftIcon={project ? () => <></> : SvgBubbleText}
           onClick={() => route({ chatSessionId: chatSession.id })}
-          active={params(SEARCH_PARAM_NAMES.CHAT_ID) === chatSession.id}
+          active={active}
           rightChildren={rightMenu}
           focused={renaming}
         >
@@ -353,7 +383,7 @@ function ChatButtonInner({
               onClose={() => setRenaming(false)}
             />
           ) : (
-            name
+            displayName
           )}
         </SidebarTab>
       </PopoverAnchor>
@@ -365,7 +395,7 @@ function ChatButtonInner({
       {popup}
 
       {deleteConfirmationModalOpen && (
-        <ConfirmationModal
+        <ConfirmationModalLayout
           title="Delete Chat"
           icon={SvgTrash}
           onClose={() => setDeleteConfirmationModalOpen(false)}
@@ -383,7 +413,7 @@ function ChatButtonInner({
         >
           Are you sure you want to delete this chat? This action cannot be
           undone.
-        </ConfirmationModal>
+        </ConfirmationModalLayout>
       )}
 
       {showMoveCustomAgentModal && (

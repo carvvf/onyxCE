@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 import re
 import sys
@@ -36,7 +38,9 @@ _LAZY_IMPORT_MODULES_TO_IGNORE_SETTINGS: Dict[str, LazyImportSettings] = {
     "onyx.llm.litellm_singleton": LazyImportSettings(),
     "litellm": LazyImportSettings(
         ignore_files={
-            "onyx/llm/litellm_singleton.py",
+            "onyx/llm/litellm_singleton/__init__.py",
+            "onyx/llm/litellm_singleton/config.py",
+            "onyx/llm/litellm_singleton/monkey_patches.py",
         }
     ),
     "nltk": LazyImportSettings(),
@@ -129,6 +133,10 @@ def find_python_files(backend_dir: Path) -> List[Path]:
 
     # Always ignore virtual environment directories
     ignore_directories = {".venv", "venv", ".env", "env", "__pycache__"}
+
+    # Always ignore virtual environment directories
+    venv_dirs = {".venv", "venv", ".env", "env", "__pycache__"}
+    ignore_directories = ignore_directories.union(venv_dirs)
 
     python_files = []
     for file_path in backend_dir.glob("**/*.py"):

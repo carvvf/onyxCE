@@ -14,6 +14,8 @@ interface BaseMemoizedAIMessageProps {
   setPresentingDocument: (doc: MinimalOnyxDocument | null) => void;
   overriddenModel?: string;
   nodeId: number;
+  messageId?: number;
+  currentFeedback?: FeedbackType | null;
   otherMessagesCanSwitchTo: number[];
   onMessageSelection: (messageId: number) => void;
   llmManager: LlmManager | null;
@@ -23,7 +25,6 @@ interface BaseMemoizedAIMessageProps {
 
 interface InternalMemoizedAIMessageProps extends BaseMemoizedAIMessageProps {
   regenerate?: (modelOverride: LlmDescriptor) => Promise<void>;
-  handleFeedback: (feedback: FeedbackType) => void;
 }
 
 interface MemoizedAIMessageProps extends BaseMemoizedAIMessageProps {
@@ -32,35 +33,30 @@ interface MemoizedAIMessageProps extends BaseMemoizedAIMessageProps {
     parentMessage: Message;
     forceSearch?: boolean;
   }) => (modelOverRide: LlmDescriptor) => Promise<void>;
-  handleFeedbackWithMessageId: (
-    feedback: FeedbackType,
-    messageId: number
-  ) => void;
   messageId: number | undefined;
   parentMessage?: Message;
 }
 
-const _MemoizedAIMessage = React.memo(function _MemoizedAIMessage({
-  rawPackets,
-  handleFeedback,
-  assistant,
-  docs,
-  citations,
-  setPresentingDocument,
-  regenerate,
-  overriddenModel,
-  nodeId,
-  otherMessagesCanSwitchTo,
-  onMessageSelection,
-  llmManager,
-  projectFiles,
-  researchType,
-}: InternalMemoizedAIMessageProps) {
-  return (
-    <AIMessage
-      rawPackets={rawPackets}
-      chatState={{
-        handleFeedback,
+const InternalMemoizedAIMessage = React.memo(
+  function InternalMemoizedAIMessage({
+    rawPackets,
+    assistant,
+    docs,
+    citations,
+    setPresentingDocument,
+    regenerate,
+    overriddenModel,
+    nodeId,
+    messageId,
+    currentFeedback,
+    otherMessagesCanSwitchTo,
+    onMessageSelection,
+    llmManager,
+    projectFiles,
+    researchType,
+  }: InternalMemoizedAIMessageProps) {
+    const chatState = React.useMemo(
+      () => ({
         assistant,
         docs,
         userFiles: projectFiles || [],
@@ -69,18 +65,36 @@ const _MemoizedAIMessage = React.memo(function _MemoizedAIMessage({
         regenerate,
         overriddenModel,
         researchType,
-      }}
-      nodeId={nodeId}
-      llmManager={llmManager}
-      otherMessagesCanSwitchTo={otherMessagesCanSwitchTo}
-      onMessageSelection={onMessageSelection}
-    />
-  );
-});
+      }),
+      [
+        assistant,
+        docs,
+        projectFiles,
+        citations,
+        setPresentingDocument,
+        regenerate,
+        overriddenModel,
+        researchType,
+      ]
+    );
+
+    return (
+      <AIMessage
+        rawPackets={rawPackets}
+        chatState={chatState}
+        nodeId={nodeId}
+        messageId={messageId}
+        currentFeedback={currentFeedback}
+        llmManager={llmManager}
+        otherMessagesCanSwitchTo={otherMessagesCanSwitchTo}
+        onMessageSelection={onMessageSelection}
+      />
+    );
+  }
+);
 
 export const MemoizedAIMessage = ({
   rawPackets,
-  handleFeedbackWithMessageId,
   assistant,
   docs,
   citations,
@@ -89,6 +103,7 @@ export const MemoizedAIMessage = ({
   overriddenModel,
   nodeId,
   messageId,
+  currentFeedback,
   parentMessage,
   otherMessagesCanSwitchTo,
   onMessageSelection,
@@ -113,21 +128,9 @@ export const MemoizedAIMessage = ({
     };
   }, [messageId, parentMessage, createRegenerator]);
 
-  const handleFeedback = useCallback(
-    (feedback: FeedbackType) => {
-      if (messageId === undefined) {
-        console.error("Message has no messageId", nodeId);
-        return;
-      }
-      handleFeedbackWithMessageId(feedback, messageId!);
-    },
-    [handleFeedbackWithMessageId, messageId]
-  );
-
   return (
-    <_MemoizedAIMessage
+    <InternalMemoizedAIMessage
       rawPackets={rawPackets}
-      handleFeedback={handleFeedback}
       assistant={assistant}
       docs={docs}
       citations={citations}
@@ -135,6 +138,8 @@ export const MemoizedAIMessage = ({
       regenerate={regenerate}
       overriddenModel={overriddenModel}
       nodeId={nodeId}
+      messageId={messageId}
+      currentFeedback={currentFeedback}
       otherMessagesCanSwitchTo={otherMessagesCanSwitchTo}
       onMessageSelection={onMessageSelection}
       llmManager={llmManager}

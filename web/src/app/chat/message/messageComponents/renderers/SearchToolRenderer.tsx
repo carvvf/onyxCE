@@ -81,8 +81,8 @@ export const SearchToolRenderer: MessageRenderer<
   children,
 }) => {
   const posthog = usePostHog();
-  const isSimpleAgentFrameworkEnabled =
-    posthog.isFeatureEnabled("simple-agent-framework") ?? false;
+  const isSimpleAgentFrameworkDisabled =
+    posthog.isFeatureEnabled("disable-simple-agent-framework") ?? false;
   // Check if this message has a research_type, which indicates it's using the simple agent framework
   const isDeepResearch = state.researchType === ResearchType.Deep;
 
@@ -194,8 +194,8 @@ export const SearchToolRenderer: MessageRenderer<
   // Determine the icon based on search type
   const icon = isInternetSearch ? FiGlobe : FiSearch;
 
-  // If this message has a research type, use the V2 renderer (simple agent framework)
-  if (isSimpleAgentFrameworkEnabled && !isDeepResearch) {
+  // Use V2 renderer unless feature flag is enabled to disable it, and not deep research
+  if (!isSimpleAgentFrameworkDisabled && !isDeepResearch) {
     return (
       <SearchToolRendererV2
         packets={packets}
@@ -223,11 +223,11 @@ export const SearchToolRenderer: MessageRenderer<
     icon,
     status,
     content: (
-      <div className="flex flex-col py-padding-button gap-spacing-interline">
+      <div className="flex flex-col py-3 gap-2">
         <Text text02 secondaryBody>
           Queries
         </Text>
-        <div className="flex flex-wrap gap-spacing-interline pl-1">
+        <div className="flex flex-wrap gap-2 pl-1">
           {queries.slice(0, queriesToShow).map((query, index) => (
             <div
               key={index}

@@ -105,15 +105,44 @@ class TeamsConnector(
         if self.graph_client is None:
             raise ConnectorMissingCredentialError("Teams credentials not loaded.")
 
+        # Determine timeout based on special characters
+        has_special_chars = _has_odata_incompatible_chars(self.requested_team_list)
+        timeout = 30 if has_special_chars else 10
+
         try:
             # Minimal call to confirm we can retrieve Teams
-            # make sure it doesn't take forever, since this is a syncronous call
+            # Use longer timeout if team names have special characters (requires client-side filtering)
+            logger.info(
+                f"Requested team count: {len(self.requested_team_list) if self.requested_team_list else 0}, "
+                f"Has special chars: {has_special_chars}, "
+                f"Timeout: {timeout}s"
+            )
+
             found_teams = run_with_timeout(
-                timeout=10,
+                timeout=timeout,
                 func=_collect_all_teams,
                 graph_client=self.graph_client,
                 requested=self.requested_team_list,
             )
+
+            logger.info(
+                f"Teams validation successful - " f"Found {len(found_teams)} team(s)"
+            )
+
+        except TimeoutError as e:
+            if has_special_chars:
+                raise ConnectorValidationError(
+                    f"Timeout while fetching Teams (waited {timeout}s). "
+                    f"Team names with special characters (&, (, )) require fetching all teams "
+                    f"for client-side filtering, which can take longer. "
+                    f"Error: {e}"
+                )
+            else:
+                raise ConnectorValidationError(
+                    f"Timeout while fetching Teams (waited {timeout}s). "
+                    f"This may indicate network issues or a large number of teams. "
+                    f"Error: {e}"
+                )
 
         except ClientRequestException as e:
             if not e.response:
@@ -290,6 +319,18 @@ class TeamsConnector(
                     slim_doc_buffer = []
 
 
+def _has_odata_incompatible_chars(team_names: list[str] | None) -> bool:
+    """Check if any team name contains characters that break OData filters.
+
+    The &, (, and ) characters are not allowed in OData string literals and are
+    reserved characters in OData syntax. Server-side filtering is not possible for
+    team names containing these characters.
+    """
+    if not team_names:
+        return False
+    return any(char in name for name in team_names for char in ["&", "(", ")"])
+
+
 def _construct_semantic_identifier(channel: Channel, top_message: Message) -> str:
     top_message_user_name: str
 
@@ -378,6 +419,16 @@ def _update_request_url(request: RequestOptions, next_url: str) -> None:
     request.url = next_url
 
 
+def _add_prefer_header(request: RequestOptions) -> None:
+    """Add Prefer header to work around Microsoft Graph API ampersand bug.
+    See: https://developer.microsoft.com/en-us/graph/known-issues/?search=18185
+    """
+    if not hasattr(request, "headers") or request.headers is None:
+        request.headers = {}
+    # Add header to handle properly encoded ampersands in filters
+    request.headers["Prefer"] = "legacySearch=false"
+
+
 def _collect_all_teams(
     graph_client: GraphClient,
     requested: list[str] | None = None,
@@ -385,23 +436,37 @@ def _collect_all_teams(
     teams: list[Team] = []
     next_url: str | None = None
 
-    # Only use OData filter if team names don't have special characters
-    # These chars are known to cause OData/URL encoding issues: &'\"?#%+=/\
-    problematic_chars = "&'\"?#%+=/\\"
-    use_filter = requested and not any(
-        c in name for name in requested for c in problematic_chars
-    )
-    filter = None
-    if use_filter and requested:
-        escaped_names = [name.replace("'", "''") for name in requested]
-        filter = " or ".join(
-            f"displayName eq '{team_name}'" for team_name in escaped_names
+    # Check if team names have special characters that break OData filters
+    has_special_chars = _has_odata_incompatible_chars(requested)
+    if (
+        has_special_chars and requested
+    ):  # requested must exist if has_special_chars is True
+        logger.info(
+            f"Team name(s) contain special characters (&, (, or )) which are not supported "
+            f"in OData string literals. Fetching all teams and using client-side filtering. "
+            f"Count: {len(requested)}"
         )
+
+    # Build OData filter for requested teams (only if we didn't already return from raw HTTP above)
+    filter = None
+    use_filter = (
+        bool(requested) and not has_special_chars
+    )  # Skip OData for special chars (fallback to client-side)
+    if use_filter and requested:
+        filter_parts = []
+        for name in requested:
+            # Escape single quotes for OData syntax (replace ' with '')
+            escaped_name = name.replace("'", "''")
+            filter_parts.append(f"displayName eq '{escaped_name}'")
+        filter = " or ".join(filter_parts)
 
     while True:
         try:
             if filter:
+                # Use normal filter for teams without special characters
                 query = graph_client.teams.get().filter(filter)
+                # Add header to work around Microsoft Graph API ampersand bug
+                query.before_execute(lambda req: _add_prefer_header(request=req))
             else:
                 query = graph_client.teams.get_all(
                     # explicitly needed because of incorrect type definitions provided by the `office365` library

@@ -84,17 +84,13 @@ def _image_generation_core(
                 list[ImageGenerationResponse], tool_response.response
             )
             file_ids = save_files(
-                urls=[img.url for img in image_generation_responses if img.url],
-                base64_files=[
-                    img.image_data
-                    for img in image_generation_responses
-                    if img.image_data
-                ],
+                urls=[],
+                base64_files=[img.image_data for img in image_generation_responses],
             )
             generated_images = [
                 GeneratedImage(
                     file_id=file_id,
-                    url=img.url if img.url else build_frontend_file_url(file_id),
+                    url=build_frontend_file_url(file_id),
                     revised_prompt=img.revised_prompt,
                 )
                 for img, file_id in zip(image_generation_responses, file_ids)
@@ -109,7 +105,7 @@ def _image_generation_core(
             reasoning="Generating images",
         )
     )
-    run_context.context.aggregated_context.global_iteration_responses.append(
+    run_context.context.global_iteration_responses.append(
         IterationAnswer(
             tool=image_generation_tool_instance.name,
             tool_id=image_generation_tool_instance.id,
@@ -153,13 +149,22 @@ def image_generation(
         prompt: The text description of the image to generate
         shape: The desired image shape - 'square', 'portrait', or 'landscape'
     """
-    image_generation_tool_instance = (
-        run_context.context.run_dependencies.image_generation_tool
+    image_generation_tool_instance = next(
+        (
+            tool
+            for tool in run_context.context.run_dependencies.tools
+            if tool.name == ImageGenerationTool._NAME
+        ),
+        None,
     )
-    assert image_generation_tool_instance is not None
+    if image_generation_tool_instance is None:
+        raise ValueError("Image generation tool not found")
 
     generated_images: list[GeneratedImage] = _image_generation_core(
-        run_context, prompt, shape, image_generation_tool_instance
+        run_context,
+        prompt,
+        shape,
+        cast(ImageGenerationTool, image_generation_tool_instance),
     )
 
     # We should stop after this tool is called, so it doesn't matter what it returns

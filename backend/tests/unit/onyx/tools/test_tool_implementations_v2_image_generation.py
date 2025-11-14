@@ -84,7 +84,6 @@ def create_test_run_context(
 
     # Create test dependencies
     emitter = MockEmitter()
-    aggregated_context = MockAggregatedContext()
 
     run_dependencies = MockRunDependencies(redis_client=redis_client)
     run_dependencies.emitter = emitter
@@ -92,8 +91,6 @@ def create_test_run_context(
     # Create the actual context object
     context = ChatTurnContext(
         current_run_step=current_run_step,
-        iteration_instructions=[],
-        aggregated_context=aggregated_context,  # type: ignore[arg-type]
         run_dependencies=run_dependencies,  # type: ignore[arg-type]
         chat_session_id=uuid4(),
         message_id=1,
@@ -131,13 +128,11 @@ def test_image_generation_core_basic_functionality(
             id="image_generation_response",
             response=[
                 ImageGenerationResponse(
-                    url="https://example.com/image1.jpg",
-                    image_data=None,
+                    image_data="base64_image_data_1",
                     revised_prompt="Revised: test image prompt",
                 ),
                 ImageGenerationResponse(
-                    url=None,
-                    image_data="base64_image_data",
+                    image_data="base64_image_data_2",
                     revised_prompt="Revised: test image prompt 2",
                 ),
             ],
@@ -168,12 +163,10 @@ def test_image_generation_core_basic_functionality(
 
     # Verify context was updated
     assert test_run_context.context.current_run_step == 2
-    assert (
-        len(test_run_context.context.aggregated_context.global_iteration_responses) == 1
-    )
+    assert len(test_run_context.context.global_iteration_responses) == 1
 
     # Check iteration answer
-    answer = test_run_context.context.aggregated_context.global_iteration_responses[0]
+    answer = test_run_context.context.global_iteration_responses[0]
     assert isinstance(answer, IterationAnswer)
     assert answer.tool == "image_generation_tool"
     assert answer.tool_id == 2
@@ -199,12 +192,12 @@ def test_image_generation_core_basic_functionality(
 
     # Verify save_files was called correctly
     mock_save_files.assert_called_once_with(
-        urls=["https://example.com/image1.jpg"],
-        base64_files=["base64_image_data"],
+        urls=[],
+        base64_files=["base64_image_data_1", "base64_image_data_2"],
     )
 
-    # Verify build_frontend_file_url was called for the second image
-    mock_build_frontend_file_url.assert_called_with("file_id_2")
+    # Verify build_frontend_file_url was called for both images
+    assert mock_build_frontend_file_url.call_count == 2
 
 
 def test_image_generation_core_exception_handling() -> None:
@@ -254,8 +247,7 @@ def test_image_generation_core_different_shapes(
             id="image_generation_response",
             response=[
                 ImageGenerationResponse(
-                    url="https://example.com/image1.jpg",
-                    image_data=None,
+                    image_data="base64_image_data",
                     revised_prompt="Revised: test image prompt",
                 ),
             ],
@@ -281,13 +273,8 @@ def test_image_generation_core_different_shapes(
         assert instructions.purpose == "Generating images"
 
         # Check iteration answer was created
-        assert (
-            len(test_run_context.context.aggregated_context.global_iteration_responses)
-            == 1
-        )
-        answer = test_run_context.context.aggregated_context.global_iteration_responses[
-            0
-        ]
+        assert len(test_run_context.context.global_iteration_responses) == 1
+        answer = test_run_context.context.global_iteration_responses[0]
         assert isinstance(answer, IterationAnswer)
         assert answer.tool == "image_generation_tool"
 
@@ -346,8 +333,7 @@ def test_image_generation_core_handles_cancellation_gracefully(
             id="image_generation_response",
             response=[
                 ImageGenerationResponse(
-                    url="https://example.com/image1.jpg",
-                    image_data=None,
+                    image_data="base64_image_data",
                     revised_prompt="Revised: test image prompt",
                 ),
             ],

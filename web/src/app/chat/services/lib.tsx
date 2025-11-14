@@ -312,6 +312,19 @@ export async function handleChatFeedback(
   return response;
 }
 
+export async function removeChatFeedback(messageId: number) {
+  const response = await fetch(
+    `/api/chat/remove-chat-message-feedback?chat_message_id=${messageId}`,
+    {
+      method: "DELETE",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  return response;
+}
+
 export async function renameChatSession(
   chatSessionId: string,
   newName: string
@@ -534,6 +547,7 @@ export function processRawChatHistory(
       latestChildNodeId: messageInfo.latest_child_message,
       overridden_model: messageInfo.overridden_model,
       packets: packetsForMessage || [],
+      currentFeedback: messageInfo.current_feedback as FeedbackType | null,
     };
 
     messages.set(messageInfo.message_id, message);
@@ -681,9 +695,9 @@ export function useScrollonStream({
   enableAutoScroll,
 }: {
   chatState: ChatState;
-  scrollableDivRef: RefObject<HTMLDivElement>;
+  scrollableDivRef: RefObject<HTMLDivElement | null>;
   scrollDist: MutableRefObject<number>;
-  endDivRef: RefObject<HTMLDivElement>;
+  endDivRef: RefObject<HTMLDivElement | null>;
   debounceNumber: number;
   mobile?: boolean;
   enableAutoScroll?: boolean;
